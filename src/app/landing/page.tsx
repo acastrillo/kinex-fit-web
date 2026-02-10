@@ -252,7 +252,7 @@ export default function LandingPage() {
                                     href="/beta-signup"
                                     className={cn(
                                         buttonVariants({ size: "lg" }),
-                                        "bg-white text-[#FF6B35] hover:bg-white/90 hover:text-[#FF6B35] rounded-full px-10 h-14 text-lg font-bold shadow-lg"
+                                        "bg-white text-[#FF6B35] hover:bg-white/90 hover:text-[#E55A2B] rounded-full px-10 h-14 text-lg font-bold shadow-lg"
                                     )}
                                 >
                                     Get Started for Free
