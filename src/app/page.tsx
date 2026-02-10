@@ -22,94 +22,6 @@ import {
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 
-function PublicHome() {
-  const features = [
-    {
-      title: "AI accountability",
-      description: "Daily nudges and progress checks that keep your streak alive.",
-      icon: Sparkles,
-    },
-    {
-      title: "Progress clarity",
-      description: "See the workouts that matter and the wins you can repeat.",
-      icon: TrendingUp,
-    },
-    {
-      title: "Weekly focus",
-      description: "Turn goals into a training plan that fits your real schedule.",
-      icon: Calendar,
-    },
-  ]
-
-  return (
-    // Force re-render to fix hydration mismatch
-    <div
-      className="relative min-h-screen overflow-hidden bg-transparent text-text-primary"
-      suppressHydrationWarning
-    >
-      {/* Local blobs for Public Home - blending with global background */}
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-28 right-0 h-72 w-72 rounded-full bg-primary/20 blur-3xl" />
-        <div className="absolute bottom-0 left-0 h-72 w-72 rounded-full bg-accent/20 blur-3xl" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.05),_transparent_55%)]" />
-      </div>
-
-      <div className="relative z-10 flex min-h-screen flex-col px-6 py-16">
-        <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col items-center text-center">
-          <div className="flex w-full items-center justify-center sm:justify-start">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/15">
-                <Dumbbell className="h-6 w-6 text-primary" />
-              </div>
-              <span className="text-lg font-semibold tracking-wide">Kinex Fit</span>
-            </div>
-          </div>
-
-          <div className="mt-14 max-w-2xl">
-            <span className="inline-flex items-center rounded-full border border-border/70 bg-surface/60 px-4 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-text-secondary">
-              Beta Access
-            </span>
-            <h1 className="mt-6 text-4xl font-semibold tracking-tight text-text-primary md:text-6xl">
-              Train with a coach that never misses a day.
-            </h1>
-            <p className="mt-6 text-base text-text-secondary md:text-lg">
-              Kinex Fit keeps your workouts intentional, tracked, and accountable. Join the beta to shape the future of
-              AI-driven training.
-            </p>
-          </div>
-
-          <div className="mt-10 flex w-full max-w-md flex-col gap-3 sm:flex-row sm:justify-center">
-            <Button asChild className="h-12 w-full text-base font-semibold sm:w-auto">
-              <Link href="/beta-signup">Beta Sign up</Link>
-            </Button>
-            <Button asChild variant="outline" className="h-12 w-full text-base font-semibold sm:w-auto">
-              <Link href="/sign-in">Sign up / Sign in</Link>
-            </Button>
-          </div>
-
-          <div className="mt-12 grid w-full max-w-4xl gap-4 text-left sm:grid-cols-2 lg:grid-cols-3">
-            {features.map((feature) => (
-              <div
-                key={feature.title}
-                className="rounded-2xl border border-border/60 bg-surface/80 p-5 shadow-soft"
-              >
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/15">
-                  <feature.icon className="h-5 w-5 text-primary" />
-                </div>
-                <h3 className="mt-4 text-base font-semibold text-text-primary">{feature.title}</h3>
-                <p className="mt-2 text-sm text-text-secondary">{feature.description}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-12 text-sm text-text-tertiary">
-            Built for real people, real schedules, and real results.
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 export default function HomePage() {
   const { isAuthenticated, isLoading: isSessionLoading, user } = useAuthStore()
@@ -325,8 +237,15 @@ export default function HomePage() {
     }
   }, [user?.id])
 
+  // Redirect unauthenticated users to landing page
+  useEffect(() => {
+    if (!isSessionLoading && !isAuthenticated) {
+      router.push('/landing')
+    }
+  }, [isSessionLoading, isAuthenticated, router])
+
   if (!isAuthenticated) {
-    return <PublicHome />
+    return null // Will redirect to /landing
   }
 
   const stats = [
@@ -359,20 +278,20 @@ export default function HomePage() {
   const quickActions = [
     {
       title: "Add Workout",
-      description: "Import or create a new workout",
+      description: "Create or import workout",
       href: "/add",
       icon: Plus,
       primary: true,
     },
     {
       title: "View Calendar",
-      description: "See your workout schedule",
+      description: "Your workout schedule",
       href: "/calendar",
       icon: Calendar,
     },
     {
       title: "Training Profile",
-      description: "Set goals and PRs for AI workouts",
+      description: "Set goals and PRs for AI",
       href: "/settings/training-profile",
       icon: Target,
     },
@@ -441,7 +360,7 @@ export default function HomePage() {
                       Get Your AI Workout
                     </h3>
                     <p className="text-text-secondary mb-6 max-w-md mx-auto">
-                      Personalized weekly workout based on your training profile and recent activity. Generated fresh every week!
+                      AI workout tailored to your training profile. Fresh every week!
                     </p>
                     <Button onClick={handleGenerateWOW} size="lg" className="gap-2">
                       <Sparkles className="h-4 w-4" />
