@@ -39,7 +39,7 @@ export default function LandingPage() {
                         <Link href="/sign-in" className="text-sm font-medium text-white/70 hover:text-white hidden sm:block">
                             Log in
                         </Link>
-                        <Button className="bg-[#FF6B35] hover:bg-[#E55A2B] text-white border-none rounded-full px-6">
+                        <Button asChild className="bg-[#FF6B35] hover:bg-[#E55A2B] text-white border-none rounded-full px-6">
                             <Link href="/beta-signup">Get Early Access</Link>
                         </Button>
                     </div>
@@ -72,12 +72,12 @@ export default function LandingPage() {
                     </p>
 
                     <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-                        <Button size="lg" className="bg-[#FF6B35] hover:bg-[#E55A2B] text-white rounded-full px-8 h-12 text-base shadow-[0_0_20px_rgba(255,107,53,0.3)] hover:shadow-[0_0_30px_rgba(255,107,53,0.5)] transition-all duration-300">
+                        <Button asChild size="lg" className="bg-[#FF6B35] hover:bg-[#E55A2B] text-white rounded-full px-8 h-12 text-base shadow-[0_0_20px_rgba(255,107,53,0.3)] hover:shadow-[0_0_30px_rgba(255,107,53,0.5)] transition-all duration-300">
                             <Link href="/beta-signup" className="flex items-center">
                                 Start Training Free <ArrowRight className="ml-2 h-4 w-4" />
                             </Link>
                         </Button>
-                        <Button variant="outline" size="lg" className="border-zinc-800 text-zinc-300 hover:bg-zinc-900 hover:text-white rounded-full px-8 h-12 text-base backdrop-blur-sm bg-black/30">
+                        <Button asChild variant="outline" size="lg" className="border-zinc-800 text-zinc-300 hover:bg-zinc-900 hover:text-white rounded-full px-8 h-12 text-base backdrop-blur-sm bg-black/30">
                             <Link href="#how-it-works">View Demo</Link>
                         </Button>
                     </div>
@@ -231,7 +231,7 @@ export default function LandingPage() {
                                 Join thousands of athletes who trust Kinex Fit to program their perfect workout.
                             </p>
                             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                                <Button size="lg" className="bg-white text-[#FF6B35] hover:bg-white/90 hover:text-[#FF6B35] rounded-full px-10 h-14 text-lg font-bold shadow-lg">
+                                <Button asChild size="lg" className="bg-white text-[#FF6B35] hover:bg-white/90 hover:text-[#FF6B35] rounded-full px-10 h-14 text-lg font-bold shadow-lg">
                                     <Link href="/beta-signup">Get Started for Free</Link>
                                 </Button>
                             </div>
