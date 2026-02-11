@@ -9,6 +9,21 @@ export interface UpdateSubscriptionInput {
   lastReceiptValidation: string;
 }
 
+export interface UpdateOnboardingInput {
+  experienceLevel: string | null;
+  trainingDaysPerWeek: number | null;
+  sessionDuration: number | null;
+  equipment: string[];
+  goals: string[];
+  personalRecords: Array<{
+    exerciseName: string;
+    weight: number;
+    unit: string;
+    reps?: number;
+  }>;
+  onboardingCompleted: boolean;
+}
+
 /**
  * Get user by ID
  */
@@ -136,6 +151,49 @@ export async function registerDeviceToken(
     console.log(`Registered device token for user ${userId}`);
   } catch (error) {
     console.error('Error registering device token:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update user onboarding profile
+ */
+export async function updateUserOnboarding(
+  userId: string,
+  onboarding: UpdateOnboardingInput
+): Promise<void> {
+  try {
+    const now = new Date().toISOString();
+
+    await dynamoDBUsers.update({
+      Key: { userId },
+      UpdateExpression: `
+        SET experienceLevel = :experienceLevel,
+            trainingDaysPerWeek = :trainingDaysPerWeek,
+            sessionDuration = :sessionDuration,
+            equipment = :equipment,
+            goals = :goals,
+            personalRecords = :personalRecords,
+            onboardingCompleted = :onboardingCompleted,
+            onboardingCompletedAt = :completedAt,
+            updatedAt = :updatedAt
+      `,
+      ExpressionAttributeValues: {
+        ':experienceLevel': onboarding.experienceLevel,
+        ':trainingDaysPerWeek': onboarding.trainingDaysPerWeek,
+        ':sessionDuration': onboarding.sessionDuration,
+        ':equipment': onboarding.equipment,
+        ':goals': onboarding.goals,
+        ':personalRecords': onboarding.personalRecords,
+        ':onboardingCompleted': onboarding.onboardingCompleted,
+        ':completedAt': now,
+        ':updatedAt': now,
+      },
+    });
+
+    console.log(`Updated onboarding for user ${userId}`);
+  } catch (error) {
+    console.error('Error updating user onboarding:', error);
     throw error;
   }
 }
