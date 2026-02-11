@@ -35,42 +35,45 @@ Quick guide to generate app icons using AI and prepare them for iOS.
 ### Prompt Template
 ```
 app icon design for iOS fitness app, [CONCEPT], modern minimalist,
-flat design, blue and purple gradient, simple geometric shapes,
+flat design, vibrant orange (#FF6B35), simple geometric shapes,
 no text, professional, centered composition, square format,
-solid background, high contrast
+dark background (#09090b), high contrast, energetic
 ```
 
 ### Specific Prompts (Choose One)
 
-**Prompt 1: Dumbbell Icon (Recommended)**
+**Prompt 1: Dumbbell Icon (Recommended)** ⭐
 ```
-app icon design for iOS fitness app, minimalist dumbbell symbol,
-modern flat design, blue and purple gradient, simple geometric shapes,
-professional clean look, centered composition, square format,
-white background, no text, no shadows, vector style
+app icon design for iOS fitness app, minimalist dumbbell symbol in vibrant orange color,
+modern flat design, solid orange (#FF6B35) or orange gradient (#FF6B35 to #FF9F2E),
+simple geometric shapes, professional clean look, centered composition, square format,
+dark background (#09090b near-black), no text, no shadows, vector style, high contrast,
+energetic and powerful aesthetic
 ```
 
 **Prompt 2: Strength Symbol**
 ```
 app icon design for iOS fitness app, stylized weightlifting icon,
-geometric dumbbell shape, blue to purple gradient fill,
-minimalist modern design, centered, square format, clean white background,
-no text, flat design, professional
+geometric dumbbell shape, vibrant orange (#FF6B35) fill with lighter orange (#FF9F2E) accents,
+minimalist modern design, centered, square format, dark background (#09090b),
+no text, flat design, professional, high contrast, athletic theme
 ```
 
 **Prompt 3: Athletic K Letter**
 ```
 app icon design for iOS fitness app, bold letter K with athletic theme,
-integrated dumbbell or weight symbol, blue and purple gradient,
-modern minimalist, square format, white background, no text overlay,
-professional clean design
+integrated dumbbell or weight symbol, orange gradient (#FF6B35 to #FF9F2E),
+modern minimalist, square format, dark background (#09090b near-black),
+no text overlay, professional clean design, high energy branding
 ```
 
 **Prompt 4: AI + Fitness Fusion**
 ```
 app icon design for iOS fitness app, dumbbell with tech circuit pattern,
-neural network aesthetic, blue and purple gradient, modern minimalist,
-square format, clean background, no text, futuristic professional design
+neural network aesthetic, vibrant orange (#FF6B35) with lighter orange accents (#FF9F2E),
+modern minimalist, square format, dark background (#09090b),
+no text, futuristic professional design, AI-powered fitness theme,
+subtle tech elements, high contrast
 ```
 
 ### Generation Settings
@@ -78,8 +81,9 @@ square format, clean background, no text, futuristic professional design
 **Important Parameters:**
 - **Aspect Ratio:** 1:1 (square)
 - **Size:** Request "high resolution" or "1024x1024"
-- **Style:** "flat design", "minimalist", "iOS style"
-- **Colors:** Mention "blue and purple gradient"
+- **Style:** "flat design", "minimalist", "iOS style", "vector style"
+- **Colors:** Vibrant orange (#FF6B35), lighter orange (#FF9F2E), dark background (#09090b)
+- **Contrast:** High contrast, energetic, professional
 
 ---
 
@@ -127,7 +131,7 @@ square format, clean background, no text, futuristic professional design
 
 **If image has transparency:**
 1. Open in Paint/Preview/Photopea
-2. Add white background layer
+2. Add dark background layer (#09090b or solid black)
 3. Flatten/merge layers
 4. Export as PNG
 
