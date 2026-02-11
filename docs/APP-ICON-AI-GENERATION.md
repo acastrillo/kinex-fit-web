@@ -34,56 +34,66 @@ Quick guide to generate app icons using AI and prepare them for iOS.
 
 ### Prompt Template
 ```
-app icon design for iOS fitness app, [CONCEPT], modern minimalist,
-flat design, vibrant orange (#FF6B35), simple geometric shapes,
-no text, professional, centered composition, square format,
-dark background (#09090b), high contrast, energetic
+iOS app icon, [CONCEPT], vibrant orange (#FF6B35), dark background (#09090b),
+simple bold shapes, no text, PERFECTLY SQUARE FORMAT (no rounded corners),
+1024x1024 pixels, flat design, high contrast, vector style
 ```
 
 ### Specific Prompts (Choose One)
 
-**Prompt 1: Dumbbell Icon (Recommended)** ⭐
+**Prompt 1: Minimalist Dumbbell** ⭐ **RECOMMENDED**
 ```
-app icon design for iOS fitness app, minimalist dumbbell symbol in vibrant orange color,
-modern flat design, solid orange (#FF6B35) or orange gradient (#FF6B35 to #FF9F2E),
-simple geometric shapes, professional clean look, centered composition, square format,
-dark background (#09090b near-black), no text, no shadows, vector style, high contrast,
-energetic and powerful aesthetic
-```
-
-**Prompt 2: Strength Symbol**
-```
-app icon design for iOS fitness app, stylized weightlifting icon,
-geometric dumbbell shape, vibrant orange (#FF6B35) fill with lighter orange (#FF9F2E) accents,
-minimalist modern design, centered, square format, dark background (#09090b),
-no text, flat design, professional, high contrast, athletic theme
+iOS app icon, minimalist dumbbell symbol, vibrant orange (#FF6B35) to lighter orange (#FF9F2E) gradient,
+dark near-black background (#09090b), simple geometric shapes, bold and chunky design,
+centered composition, PERFECTLY SQUARE with NO rounded corners, 1024x1024 pixels,
+no text, no shadows, flat vector style, high contrast, recognizable at small sizes
 ```
 
-**Prompt 3: Athletic K Letter**
+**Prompt 2: Simple Strength Icon**
 ```
-app icon design for iOS fitness app, bold letter K with athletic theme,
-integrated dumbbell or weight symbol, orange gradient (#FF6B35 to #FF9F2E),
-modern minimalist, square format, dark background (#09090b near-black),
-no text overlay, professional clean design, high energy branding
+iOS app icon, geometric dumbbell or kettlebell, solid vibrant orange (#FF6B35),
+dark background (#09090b), very simple bold shapes, minimal details,
+centered, PERFECTLY SQUARE (no rounded corners), 1024x1024 pixels,
+no text, flat design, high contrast, clean professional look
 ```
 
-**Prompt 4: AI + Fitness Fusion**
+**Prompt 3: Bold K Symbol**
 ```
-app icon design for iOS fitness app, dumbbell with tech circuit pattern,
-neural network aesthetic, vibrant orange (#FF6B35) with lighter orange accents (#FF9F2E),
-modern minimalist, square format, dark background (#09090b),
-no text, futuristic professional design, AI-powered fitness theme,
-subtle tech elements, high contrast
+iOS app icon, bold letter K with minimal dumbbell element, orange gradient (#FF6B35 to #FF9F2E),
+dark background (#09090b), simple thick shapes, easy to read at small sizes,
+PERFECTLY SQUARE format with NO rounded corners, 1024x1024 pixels,
+no additional text, flat vector style, high contrast, modern branding
+```
+
+**Prompt 4: Tech Dumbbell (Simple Version)**
+```
+iOS app icon, simple dumbbell with SUBTLE circuit lines, vibrant orange (#FF6B35),
+dark background (#09090b), minimal tech elements (few clean lines only),
+bold simple shapes, PERFECTLY SQUARE (no rounded corners), 1024x1024 pixels,
+no text, flat design, high contrast, readable at 40x40 pixels
 ```
 
 ### Generation Settings
 
-**Important Parameters:**
-- **Aspect Ratio:** 1:1 (square)
-- **Size:** Request "high resolution" or "1024x1024"
-- **Style:** "flat design", "minimalist", "iOS style", "vector style"
+**CRITICAL Requirements:**
+- **Size:** MUST be exactly 1024×1024 pixels
+- **Format:** PERFECTLY SQUARE - NO rounded corners (iOS applies corners automatically)
+- **Background:** Solid dark color (#09090b) - NO transparency
+- **Simplicity:** Bold, simple shapes - must be recognizable at 40×40 pixels
+
+**Style Parameters:**
 - **Colors:** Vibrant orange (#FF6B35), lighter orange (#FF9F2E), dark background (#09090b)
-- **Contrast:** High contrast, energetic, professional
+- **Design:** Flat design, minimalist, vector style, no shadows
+- **Complexity:** Simple > Detailed (small-size visibility is critical)
+- **Contrast:** High contrast between orange and dark background
+
+**What to AVOID:**
+- ❌ Rounded corners (must be perfectly square)
+- ❌ Fine details or thin lines (won't show at small sizes)
+- ❌ Text or letters (unless very bold and simple)
+- ❌ Complex patterns (circuit boards should be MINIMAL)
+- ❌ Gradients with too many colors (stick to 2-tone orange)
+- ❌ Transparency or alpha channels
 
 ---
 
@@ -120,12 +130,13 @@ subtle tech elements, high contrast
 
 - [ ] Size: Exactly 1024×1024 pixels
 - [ ] Format: PNG (not JPG)
-- [ ] No transparency (solid background)
-- [ ] Square (1:1 aspect ratio)
-- [ ] High contrast colors
-- [ ] No rounded corners
+- [ ] **PERFECTLY SQUARE** - NO rounded corners whatsoever
+- [ ] No transparency (solid dark background #09090b)
+- [ ] High contrast colors (orange on dark)
+- [ ] Simple, bold shapes (readable at 40×40 pixels)
 - [ ] Centered composition
 - [ ] File size: ~100-500KB
+- [ ] No pre-applied effects (shadows, glows, rounded corners)
 
 ### Quick Fixes
 
@@ -141,9 +152,26 @@ subtle tech elements, high contrast
 3. Use "bicubic" or "lanczos" interpolation
 4. Export as PNG
 
-**If has rounded corners:**
-- Regenerate with prompt: "square format, no rounded corners"
-- Or crop to remove corners
+**If has rounded corners:** ⚠️ **CRITICAL ISSUE**
+- **DO NOT USE** - rounded corners will cause display issues
+- Regenerate with emphasis: "PERFECTLY SQUARE FORMAT, NO rounded corners"
+- Or use Photopea to crop/expand canvas to perfect square
+- iOS applies its own corner radius - your icon MUST be square
+
+### Common AI Generation Issues
+
+**Problem: AI adds rounded corners**
+- **Solution**: Add "PERFECTLY SQUARE" and "NO rounded corners" to prompt
+- Use phrases like "sharp square edges" or "straight edges"
+- May need 2-3 attempts to get perfectly square output
+
+**Problem: Too much detail/complexity**
+- **Solution**: Simplify prompt - use "minimal", "simple", "bold shapes"
+- Test at 40×40 pixels - if hard to recognize, regenerate simpler
+
+**Problem: Wrong aspect ratio**
+- **Solution**: Explicitly request "1024x1024 pixels, square aspect ratio"
+- Crop in image editor if slightly off
 
 ---
 
