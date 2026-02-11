@@ -13,8 +13,19 @@ struct WorkoutsTab: View {
     @State private var selectedImport: InstagramImport?
     @State private var showingImportReview = false
 
+    // Sync states
+    @State private var isSyncing = false
+    @State private var syncStatus: SyncStatus = .idle
+    @State private var pendingCount = 0
+    @State private var failedCount = 0
+    @State private var showSyncBanner = false
+
     private var workoutRepository: WorkoutRepository {
         appState.environment.workoutRepository
+    }
+
+    private var syncEngine: SyncEngine {
+        appState.environment.syncEngine
     }
 
     private var filteredWorkouts: [Workout] {
@@ -42,12 +53,35 @@ struct WorkoutsTab: View {
             .navigationTitle("Workouts")
             .searchable(text: $searchText, prompt: "Search workouts")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if pendingCount > 0 || failedCount > 0 {
+                        SyncStatusIndicator(
+                            status: syncStatus,
+                            pendingCount: pendingCount,
+                            failedCount: failedCount,
+                            onTap: triggerManualSync
+                        )
+                    }
+                }
+
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         showingAddWorkout = true
                     } label: {
                         Image(systemName: "plus")
                     }
+                }
+            }
+            .safeAreaInset(edge: .top) {
+                if showSyncBanner && (pendingCount > 0 || failedCount > 0) {
+                    SyncStatusBanner(
+                        pendingCount: pendingCount,
+                        failedCount: failedCount,
+                        onRetry: triggerManualSync,
+                        onDismiss: { showSyncBanner = false }
+                    )
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
             .sheet(isPresented: $showingAddWorkout) {
@@ -67,6 +101,7 @@ struct WorkoutsTab: View {
             }
             .refreshable {
                 await loadWorkouts()
+                await triggerSync()
                 appState.checkForPendingImports()
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
@@ -76,6 +111,7 @@ struct WorkoutsTab: View {
         .task {
             await startObserving()
             appState.checkForPendingImports()
+            updateSyncStatus()
         }
     }
 
@@ -170,6 +206,58 @@ struct WorkoutsTab: View {
         )
         try await workoutRepository.create(workout)
         selectedImport = nil
+    }
+
+    // MARK: - Sync Operations
+
+    private func updateSyncStatus() {
+        do {
+            pendingCount = try syncEngine.getPendingCount()
+            failedCount = try syncEngine.getFailedCount()
+
+            if isSyncing {
+                syncStatus = .syncing
+            } else if failedCount > 0 {
+                syncStatus = .error
+                showSyncBanner = true
+            } else if pendingCount > 0 {
+                syncStatus = .idle
+            } else {
+                syncStatus = .success
+                // Hide success status after 2 seconds
+                Task {
+                    try? await Task.sleep(for: .seconds(2))
+                    if syncStatus == .success {
+                        syncStatus = .idle
+                    }
+                }
+            }
+        } catch {
+            // Failed to get sync status
+        }
+    }
+
+    private func triggerSync() async {
+        guard !isSyncing else { return }
+
+        isSyncing = true
+        syncStatus = .syncing
+
+        do {
+            try await syncEngine.processSyncQueue()
+            await loadWorkouts() // Refresh workouts after sync
+        } catch {
+            // Sync failed, status will be updated by updateSyncStatus
+        }
+
+        isSyncing = false
+        updateSyncStatus()
+    }
+
+    private func triggerManualSync() {
+        Task {
+            await triggerSync()
+        }
     }
 }
 
