@@ -1,0 +1,531 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		11EF2F132F29476F00AF6E67 /* BodyMetric.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F0F2F29476F00AF6E67 /* BodyMetric.swift */; };
+		11EF2F142F29476F00AF6E67 /* User.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F102F29476F00AF6E67 /* User.swift */; };
+		11EF2F152F29476F00AF6E67 /* Workout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F112F29476F00AF6E67 /* Workout.swift */; };
+		11EF2F162F29476F00AF6E67 /* AuthModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F0E2F29476F00AF6E67 /* AuthModels.swift */; };
+		11EF2F1B2F29478200AF6E67 /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F172F29478200AF6E67 /* AuthService.swift */; };
+		11EF2F1C2F29478200AF6E67 /* WorkoutRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F192F29478200AF6E67 /* WorkoutRepository.swift */; };
+		11EF2F1D2F29478200AF6E67 /* UserRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F182F29478200AF6E67 /* UserRepository.swift */; };
+		11EF2F212F29478B00AF6E67 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F1E2F29478B00AF6E67 /* AuthViewModel.swift */; };
+		11EF2F222F29478B00AF6E67 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F1F2F29478B00AF6E67 /* TokenStore.swift */; };
+		11EF2F302F29479400AF6E67 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F252F29479400AF6E67 /* MainTabView.swift */; };
+		11EF2F312F29479400AF6E67 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F232F29479400AF6E67 /* SignInView.swift */; };
+		11EF2F322F29479400AF6E67 /* MetricsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F272F29479400AF6E67 /* MetricsTab.swift */; };
+		11EF2F332F29479400AF6E67 /* WorkoutsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F2D2F29479400AF6E67 /* WorkoutsTab.swift */; };
+		11EF2F342F29479400AF6E67 /* ScanTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F2B2F29479400AF6E67 /* ScanTab.swift */; };
+		11EF2F352F29479400AF6E67 /* ProfileTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EF2F292F29479400AF6E67 /* ProfileTab.swift */; };
+		1A2B3C4D5E6F000000000020 /* KinexFitApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000010 /* KinexFitApp.swift */; };
+		1A2B3C4D5E6F000000000021 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000011 /* AppState.swift */; };
+		1A2B3C4D5E6F000000000022 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000012 /* RootView.swift */; };
+		1A2B3C4D5E6F000000000023 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000013 /* AppEnvironment.swift */; };
+		1A2B3C4D5E6F000000000024 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000014 /* AppConfig.swift */; };
+		1A2B3C4D5E6F000000000026 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000016 /* APIClient.swift */; };
+		1A2B3C4D5E6F000000000027 /* APIRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000017 /* APIRequest.swift */; };
+		1A2B3C4D5E6F000000000028 /* AppDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000018 /* AppDatabase.swift */; };
+		1A2B3C4D5E6F000000000029 /* DatabaseMigrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000019 /* DatabaseMigrator.swift */; };
+		1A2B3C4D5E6F00000000002A /* SyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F00000000001A /* SyncEngine.swift */; };
+		1A2B3C4D5E6F00000000002B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F00000000001B /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		11EF2F392F29666500AF6E67 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		11EF2F0E2F29476F00AF6E67 /* AuthModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthModels.swift; sourceTree = "<group>"; };
+		11EF2F0F2F29476F00AF6E67 /* BodyMetric.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyMetric.swift; sourceTree = "<group>"; };
+		11EF2F102F29476F00AF6E67 /* User.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = User.swift; sourceTree = "<group>"; };
+		11EF2F112F29476F00AF6E67 /* Workout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workout.swift; sourceTree = "<group>"; };
+		11EF2F172F29478200AF6E67 /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
+		11EF2F182F29478200AF6E67 /* UserRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserRepository.swift; sourceTree = "<group>"; };
+		11EF2F192F29478200AF6E67 /* WorkoutRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutRepository.swift; sourceTree = "<group>"; };
+		11EF2F1E2F29478B00AF6E67 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
+		11EF2F1F2F29478B00AF6E67 /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
+		11EF2F232F29479400AF6E67 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
+		11EF2F252F29479400AF6E67 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
+		11EF2F272F29479400AF6E67 /* MetricsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricsTab.swift; sourceTree = "<group>"; };
+		11EF2F292F29479400AF6E67 /* ProfileTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileTab.swift; sourceTree = "<group>"; };
+		11EF2F2B2F29479400AF6E67 /* ScanTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanTab.swift; sourceTree = "<group>"; };
+		11EF2F2D2F29479400AF6E67 /* WorkoutsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutsTab.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F000000000008 /* Kinex Fit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = "Kinex Fit.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1A2B3C4D5E6F000000000010 /* KinexFitApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinexFitApp.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F000000000011 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F000000000012 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F000000000013 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F000000000014 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F000000000016 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F000000000017 /* APIRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIRequest.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F000000000018 /* AppDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDatabase.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F000000000019 /* DatabaseMigrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseMigrator.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F00000000001A /* SyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncEngine.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F00000000001B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		1A2B3C4D5E6F00000000001C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1A2B3C4D5E6F000000000006 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		11EF2F122F29476F00AF6E67 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				11EF2F0E2F29476F00AF6E67 /* AuthModels.swift */,
+				11EF2F0F2F29476F00AF6E67 /* BodyMetric.swift */,
+				11EF2F102F29476F00AF6E67 /* User.swift */,
+				11EF2F112F29476F00AF6E67 /* Workout.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		11EF2F1A2F29478200AF6E67 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				11EF2F172F29478200AF6E67 /* AuthService.swift */,
+				11EF2F182F29478200AF6E67 /* UserRepository.swift */,
+				11EF2F192F29478200AF6E67 /* WorkoutRepository.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		11EF2F202F29478B00AF6E67 /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				11EF2F1E2F29478B00AF6E67 /* AuthViewModel.swift */,
+				11EF2F1F2F29478B00AF6E67 /* TokenStore.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		11EF2F242F29479400AF6E67 /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				11EF2F232F29479400AF6E67 /* SignInView.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		11EF2F262F29479400AF6E67 /* Main */ = {
+			isa = PBXGroup;
+			children = (
+				11EF2F252F29479400AF6E67 /* MainTabView.swift */,
+			);
+			path = Main;
+			sourceTree = "<group>";
+		};
+		11EF2F282F29479400AF6E67 /* Metrics */ = {
+			isa = PBXGroup;
+			children = (
+				11EF2F272F29479400AF6E67 /* MetricsTab.swift */,
+			);
+			path = Metrics;
+			sourceTree = "<group>";
+		};
+		11EF2F2A2F29479400AF6E67 /* Profile */ = {
+			isa = PBXGroup;
+			children = (
+				11EF2F292F29479400AF6E67 /* ProfileTab.swift */,
+			);
+			path = Profile;
+			sourceTree = "<group>";
+		};
+		11EF2F2C2F29479400AF6E67 /* Scan */ = {
+			isa = PBXGroup;
+			children = (
+				11EF2F2B2F29479400AF6E67 /* ScanTab.swift */,
+			);
+			path = Scan;
+			sourceTree = "<group>";
+		};
+		11EF2F2E2F29479400AF6E67 /* Workouts */ = {
+			isa = PBXGroup;
+			children = (
+				11EF2F2D2F29479400AF6E67 /* WorkoutsTab.swift */,
+			);
+			path = Workouts;
+			sourceTree = "<group>";
+		};
+		11EF2F2F2F29479400AF6E67 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				11EF2F242F29479400AF6E67 /* Auth */,
+				11EF2F262F29479400AF6E67 /* Main */,
+				11EF2F282F29479400AF6E67 /* Metrics */,
+				11EF2F2A2F29479400AF6E67 /* Profile */,
+				11EF2F2C2F29479400AF6E67 /* Scan */,
+				11EF2F2E2F29479400AF6E67 /* Workouts */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		1A2B3C4D5E6F000000000003 = {
+			isa = PBXGroup;
+			children = (
+				1A2B3C4D5E6F000000000030 /* KinexFit */,
+				1A2B3C4D5E6F000000000037 /* Frameworks */,
+				1A2B3C4D5E6F000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1A2B3C4D5E6F000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1A2B3C4D5E6F000000000008 /* Kinex Fit.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		1A2B3C4D5E6F000000000030 /* KinexFit */ = {
+			isa = PBXGroup;
+			children = (
+				11EF2F2F2F29479400AF6E67 /* Views */,
+				11EF2F202F29478B00AF6E67 /* Auth */,
+				11EF2F1A2F29478200AF6E67 /* Services */,
+				11EF2F122F29476F00AF6E67 /* Models */,
+				1A2B3C4D5E6F000000000031 /* App */,
+				1A2B3C4D5E6F000000000033 /* Networking */,
+				1A2B3C4D5E6F000000000034 /* Persistence */,
+				1A2B3C4D5E6F000000000035 /* Sync */,
+				1A2B3C4D5E6F000000000036 /* Resources */,
+			);
+			path = KinexFit;
+			sourceTree = "<group>";
+		};
+		1A2B3C4D5E6F000000000031 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				1A2B3C4D5E6F000000000010 /* KinexFitApp.swift */,
+				1A2B3C4D5E6F000000000011 /* AppState.swift */,
+				1A2B3C4D5E6F000000000012 /* RootView.swift */,
+				1A2B3C4D5E6F000000000013 /* AppEnvironment.swift */,
+				1A2B3C4D5E6F000000000014 /* AppConfig.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		1A2B3C4D5E6F000000000033 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				1A2B3C4D5E6F000000000016 /* APIClient.swift */,
+				1A2B3C4D5E6F000000000017 /* APIRequest.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		1A2B3C4D5E6F000000000034 /* Persistence */ = {
+			isa = PBXGroup;
+			children = (
+				1A2B3C4D5E6F000000000018 /* AppDatabase.swift */,
+				1A2B3C4D5E6F000000000019 /* DatabaseMigrator.swift */,
+			);
+			path = Persistence;
+			sourceTree = "<group>";
+		};
+		1A2B3C4D5E6F000000000035 /* Sync */ = {
+			isa = PBXGroup;
+			children = (
+				1A2B3C4D5E6F00000000001A /* SyncEngine.swift */,
+			);
+			path = Sync;
+			sourceTree = "<group>";
+		};
+		1A2B3C4D5E6F000000000036 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				1A2B3C4D5E6F00000000001B /* Assets.xcassets */,
+				1A2B3C4D5E6F00000000001C /* Info.plist */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		1A2B3C4D5E6F000000000037 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1A2B3C4D5E6F000000000002 /* Kinex Fit */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A2B3C4D5E6F000000000045 /* Build configuration list for PBXNativeTarget "Kinex Fit" */;
+			buildPhases = (
+				1A2B3C4D5E6F000000000005 /* Sources */,
+				1A2B3C4D5E6F000000000006 /* Frameworks */,
+				1A2B3C4D5E6F000000000007 /* Resources */,
+				11EF2F392F29666500AF6E67 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Kinex Fit";
+			packageProductDependencies = (
+			);
+			productName = "Kinex Fit";
+			productReference = 1A2B3C4D5E6F000000000008 /* Kinex Fit.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1A2B3C4D5E6F000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1630;
+				TargetAttributes = {
+					1A2B3C4D5E6F000000000002 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 1A2B3C4D5E6F000000000042 /* Build configuration list for PBXProject "	" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 1A2B3C4D5E6F000000000003;
+			packageReferences = (
+			);
+			productRefGroup = 1A2B3C4D5E6F000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1A2B3C4D5E6F000000000002 /* Kinex Fit */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		1A2B3C4D5E6F000000000007 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A2B3C4D5E6F00000000002B /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1A2B3C4D5E6F000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				11EF2F302F29479400AF6E67 /* MainTabView.swift in Sources */,
+				11EF2F312F29479400AF6E67 /* SignInView.swift in Sources */,
+				11EF2F322F29479400AF6E67 /* MetricsTab.swift in Sources */,
+				11EF2F332F29479400AF6E67 /* WorkoutsTab.swift in Sources */,
+				11EF2F342F29479400AF6E67 /* ScanTab.swift in Sources */,
+				11EF2F352F29479400AF6E67 /* ProfileTab.swift in Sources */,
+				1A2B3C4D5E6F000000000020 /* KinexFitApp.swift in Sources */,
+				11EF2F132F29476F00AF6E67 /* BodyMetric.swift in Sources */,
+				11EF2F142F29476F00AF6E67 /* User.swift in Sources */,
+				11EF2F152F29476F00AF6E67 /* Workout.swift in Sources */,
+				11EF2F162F29476F00AF6E67 /* AuthModels.swift in Sources */,
+				1A2B3C4D5E6F000000000021 /* AppState.swift in Sources */,
+				1A2B3C4D5E6F000000000022 /* RootView.swift in Sources */,
+				11EF2F212F29478B00AF6E67 /* AuthViewModel.swift in Sources */,
+				11EF2F222F29478B00AF6E67 /* TokenStore.swift in Sources */,
+				1A2B3C4D5E6F000000000023 /* AppEnvironment.swift in Sources */,
+				1A2B3C4D5E6F000000000024 /* AppConfig.swift in Sources */,
+				11EF2F1B2F29478200AF6E67 /* AuthService.swift in Sources */,
+				11EF2F1C2F29478200AF6E67 /* WorkoutRepository.swift in Sources */,
+				11EF2F1D2F29478200AF6E67 /* UserRepository.swift in Sources */,
+				1A2B3C4D5E6F000000000026 /* APIClient.swift in Sources */,
+				1A2B3C4D5E6F000000000027 /* APIRequest.swift in Sources */,
+				1A2B3C4D5E6F000000000028 /* AppDatabase.swift in Sources */,
+				1A2B3C4D5E6F000000000029 /* DatabaseMigrator.swift in Sources */,
+				1A2B3C4D5E6F00000000002A /* SyncEngine.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1A2B3C4D5E6F000000000040 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		1A2B3C4D5E6F000000000041 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		1A2B3C4D5E6F000000000043 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = KinexFit/Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Kinex Fit";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kinex.fit;
+				PRODUCT_NAME = "Kinex Fit";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		1A2B3C4D5E6F000000000044 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = KinexFit/Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Kinex Fit";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kinex.fit;
+				PRODUCT_NAME = "Kinex Fit";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1A2B3C4D5E6F000000000042 /* Build configuration list for PBXProject "	" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A2B3C4D5E6F000000000040 /* Debug */,
+				1A2B3C4D5E6F000000000041 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1A2B3C4D5E6F000000000045 /* Build configuration list for PBXNativeTarget "Kinex Fit" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A2B3C4D5E6F000000000043 /* Debug */,
+				1A2B3C4D5E6F000000000044 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 1A2B3C4D5E6F000000000001 /* Project object */;
+}
