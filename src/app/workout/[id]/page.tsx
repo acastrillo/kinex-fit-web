@@ -688,6 +688,7 @@ export default function WorkoutViewPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </>
   )
 }

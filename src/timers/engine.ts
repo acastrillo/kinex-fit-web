@@ -12,6 +12,11 @@ import type {
   AMRAPParams,
   IntervalWorkRestParams,
   TabataParams,
+  ForTimeParams,
+  ChipperParams,
+  LadderParams,
+  DeathByParams,
+  StackedParams,
   TimerSegment,
   TimerRuntimeState,
   SegmentKind,
@@ -173,6 +178,156 @@ function buildTabataSegments(params: TabataParams): TimerSegment[] {
   return segments;
 }
 
+/**
+ * Build segments for For Time timer
+ * Single continuous 'work' segment counting up (time cap optional)
+ * For "For Time" workouts, we use the time cap as a maximum duration
+ * but the user can complete early and mark done manually
+ */
+function buildForTimeSegments(params: ForTimeParams): TimerSegment[] {
+  // Use time cap if set, otherwise default to 60 minutes max
+  const duration = params.timeCapSeconds ?? 60 * 60;
+  return [
+    createSegment('For Time', 'work', duration, 0, 1),
+  ];
+}
+
+/**
+ * Build segments for Chipper timer
+ * Each exercise is a separate work segment
+ */
+function buildChipperSegments(params: ChipperParams): TimerSegment[] {
+  const segments: TimerSegment[] = [];
+  let order = 0;
+
+  params.exercises.forEach((exercise, index) => {
+    segments.push(
+      createSegment(
+        `${exercise.exerciseName} (${exercise.targetReps})`,
+        'work',
+        // Chipper exercises don't have fixed durations - they're rep-based
+        // Use time cap divided by exercises, or default to unlimited tracking
+        params.timeCapSeconds
+          ? Math.ceil(params.timeCapSeconds / params.exercises.length)
+          : 10 * 60, // Default 10 min per exercise as placeholder
+        order++,
+        index + 1
+      )
+    );
+  });
+
+  return segments;
+}
+
+/**
+ * Build segments for Ladder timer
+ * Each round with different rep counts
+ */
+function buildLadderSegments(params: LadderParams): TimerSegment[] {
+  const segments: TimerSegment[] = [];
+  let order = 0;
+
+  params.pattern.forEach((reps, index) => {
+    // Work segment for this rep count
+    segments.push(
+      createSegment(
+        `Round ${index + 1} (${reps} reps)`,
+        'work',
+        // Ladders don't have fixed durations - estimate based on reps
+        // Use time cap divided by total rounds, or 60 seconds per round default
+        params.timeCapSeconds
+          ? Math.ceil(params.timeCapSeconds / params.pattern.length)
+          : 60,
+        order++,
+        index + 1
+      )
+    );
+
+    // Rest segment between rounds (if configured and not the last round)
+    if (params.restBetweenRoundsSeconds && index < params.pattern.length - 1) {
+      segments.push(
+        createSegment(
+          `Rest`,
+          'rest',
+          params.restBetweenRoundsSeconds,
+          order++,
+          index + 1
+        )
+      );
+    }
+  });
+
+  return segments;
+}
+
+/**
+ * Build segments for Death By timer
+ * Each minute adds more reps - minute 1 = startingReps, minute 2 = startingReps + increment, etc.
+ */
+function buildDeathBySegments(params: DeathByParams): TimerSegment[] {
+  const segments: TimerSegment[] = [];
+  let order = 0;
+
+  // Default to 20 minutes if not specified
+  const maxMinutes = params.maxMinutes ?? 20;
+
+  for (let minute = 1; minute <= maxMinutes; minute++) {
+    const reps = params.startingReps + (minute - 1) * params.incrementPerMinute;
+
+    segments.push(
+      createSegment(
+        `Minute ${minute}: ${reps} ${params.exerciseName}`,
+        'work',
+        60, // Each minute is 60 seconds
+        order++,
+        minute
+      )
+    );
+  }
+
+  return segments;
+}
+
+/**
+ * Build segments for Stacked timer
+ * Combines multiple timer blocks with optional rest between
+ */
+function buildStackedSegments(params: StackedParams): TimerSegment[] {
+  const segments: TimerSegment[] = [];
+  let order = 0;
+
+  params.blocks.forEach((block, blockIndex) => {
+    // Get segments for this block's timer type
+    const blockSegments = buildSegmentsFromParams(block.timerParams);
+
+    // Add block label prefix to each segment and adjust order
+    blockSegments.forEach((segment, segIndex) => {
+      segments.push({
+        ...segment,
+        id: nextSegmentId(),
+        label: `${block.label}: ${segment.label}`,
+        order: order++,
+        loopIndex: segment.loopIndex,
+      });
+    });
+
+    // Add rest segment after block (if configured and not the last block)
+    if (block.restAfterSeconds && blockIndex < params.blocks.length - 1) {
+      segments.push(
+        createSegment(
+          `Rest before ${params.blocks[blockIndex + 1]?.label || 'next block'}`,
+          'rest',
+          block.restAfterSeconds,
+          order++,
+          blockIndex + 1
+        )
+      );
+    }
+  });
+
+  return segments;
+}
+
 // ============================================================================
 // Public Segment Builder
 // ============================================================================
@@ -191,6 +346,16 @@ export function buildSegmentsFromParams(params: TimerParams): TimerSegment[] {
       return buildIntervalWorkRestSegments(params);
     case 'TABATA':
       return buildTabataSegments(params);
+    case 'FOR_TIME':
+      return buildForTimeSegments(params);
+    case 'CHIPPER':
+      return buildChipperSegments(params);
+    case 'LADDER':
+      return buildLadderSegments(params);
+    case 'DEATH_BY':
+      return buildDeathBySegments(params);
+    case 'STACKED':
+      return buildStackedSegments(params);
     default: {
       return assertUnreachable(params as never);
     }

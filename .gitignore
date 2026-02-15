@@ -55,7 +55,3 @@ prisma/**/*.db
 
 # Stripe configuration scripts with live keys (but not templates)
 scripts/update-stripe-to-live.ps1
-
-# Documentation directories
-docs/
-data/docs/

@@ -1,0 +1,77 @@
+[DEBUG] CLI: Delegating hierarchical memory load to server for CWD: c:\spot-buddy-web (memoryImportFormat: tree)
+[DEBUG] [MemoryDiscovery] Loading server hierarchical memory for CWD: c:\spot-buddy-web (importFormat: tree)
+[DEBUG] [MemoryDiscovery] Searching for GEMINI.md starting from CWD: c:\spot-buddy-web
+[DEBUG] [MemoryDiscovery] Determined project root: c:\spot-buddy-web
+[DEBUG] [BfsFileSearch] Scanning [1/200]: batch of 1
+[DEBUG] [BfsFileSearch] Scanning [11/200]: batch of 10
+[DEBUG] [BfsFileSearch] Scanning [26/200]: batch of 15
+[DEBUG] [BfsFileSearch] Scanning [41/200]: batch of 15
+[DEBUG] [BfsFileSearch] Scanning [56/200]: batch of 15
+[DEBUG] [BfsFileSearch] Scanning [71/200]: batch of 15
+[DEBUG] [BfsFileSearch] Scanning [86/200]: batch of 15
+[DEBUG] [BfsFileSearch] Scanning [101/200]: batch of 15
+[DEBUG] [BfsFileSearch] Scanning [116/200]: batch of 15
+[DEBUG] [BfsFileSearch] Scanning [131/200]: batch of 15
+[DEBUG] [BfsFileSearch] Scanning [146/200]: batch of 15
+[DEBUG] [BfsFileSearch] Scanning [161/200]: batch of 15
+[DEBUG] [BfsFileSearch] Scanning [176/200]: batch of 15
+[DEBUG] [BfsFileSearch] Scanning [191/200]: batch of 15
+[DEBUG] [BfsFileSearch] Scanning [200/200]: batch of 9
+[DEBUG] [MemoryDiscovery] Final ordered GEMINI.md paths to read: []
+[DEBUG] [MemoryDiscovery] No GEMINI.md files found in hierarchy of the workspace.
+Loaded cached credentials.
+Flushing log events to Clearcut.
+[AgentRegistry] Initialized with 0 agents.
+File C:\Users\acast\.cache/vscode-ripgrep/ripgrep-v13.0.0-10-x86_64-pc-windows-msvc.zip has been cached
+ClearcutLogger: Flush already in progress, marking pending flush.
+Flushing log events to Clearcut.
+ClearcutLogger: Flush already in progress, marking pending flush.
+Session ID: ac8e85b4-c164-4fe0-8e60-48f33a26a113
+Flushing log events to Clearcut.
+(node:19868) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+The authentication flow in `c:\spot-buddy-web` is built upon **NextAuth.js** and uses **Amazon Cognito** as the identity provider, with user data synchronized to **DynamoDB**.
+
+Here is the analysis with file paths and key code snippets for each requested area:
+
+### 1. Login/Logout Implementations
+
+The client-side login/logout is abstracted through a custom Zustand-like store (`useAuthStore`) which wraps NextAuth's `signIn` and `signOut` functions.
+
+| Feature | File Path | Key Code Snippet |
+| :--- | :--- | :--- |
+| **Login Component** | `src/components/auth/login.tsx` | ```tsx\nconst { login } = useAuthStore();\n// ...\nconst handleSignIn = useCallback(async () => {\n  try {\n    setLoading(true);\n    await login();\n  } finally {\n    setLoading(false);\n  }\n}, [login]);\n// ...\n<p className="text-xs text-center text-[var(--text-tertiary)] pt-2">\n  Secured by Amazon Cognito\n</p>``` |
+| **Logout Handler** | `src/components/layout/header.tsx` | ```tsx\nconst { user, logout } = useAuthStore()\n\nconst handleSignOut = () => {\n  logout()\n}\n// ...\n<Button onClick={handleSignOut}>\n  <LogOut className="h-4 w-4" />\n  <span className="hidden sm:inline">Sign Out</span>\n</Button>``` |
+| **Core Login/Logout Logic** | `src/store/index.ts` | ```tsx\nimport { signIn as nextAuthSignIn, signOut as nextAuthSignOut, useSession } from "next-auth/react";\n// ...\nexport const useAuthStore = (): AuthState => {\n  // ...\n  return {\n    // ...\n    login: async () => {\n      await nextAuthSignIn("cognito", { callbackUrl: "/" });\n    },\n    logout: async () => {\n      await nextAuthSignOut({ callbackUrl: "/" });\n    },\n  };\n};``` |
+
+### 2. Session Management (JWT Tokens, Cookies)
+
+NextAuth is configured to use JWT session strategy, with a custom Cognito provider.
+
+| Feature | File Path | Key Code Snippet |
+| :--- | :--- | :--- |
+| **NextAuth Config** | `src/lib/auth-options.ts` | ```typescript\nexport const authOptions: NextAuthOptions = {\n  providers: [\n    {\n      id: "cognito",\n      name: "Cognito",\n      type: "oauth",\n      // ...\n      checks: ["state"], // Only validate state, skip nonce for federated identity\n      // ...\n    },\n  ],\n  secret: AUTH_SECRET,\n  session: {\n    strategy: "jwt",\n    maxAge: 30 * 24 * 60 * 60, // 30 days\n  },\n  pages: { signIn: "/auth/login" },\n  // ...\n};``` |
+
+### 3. Protected Route Middleware
+
+There is no explicit `middleware.ts` file shown, but the application enforces protection primarily through client-side checks using the `useAuthStore` in page components.
+
+| Feature | File Path | Key Code Snippet |
+| :--- | :--- | :--- |
+| **Client-Side Check** | *Widespread in page files (e.g., `src/app/add/page.tsx`)* | ```tsx\nimport { useAuthStore } from "@/store"\n// ...\nconst { isAuthenticated, user } = useAuthStore()\n\nif (!isAuthenticated) {\n  // Redirect or show login prompt\n}``` |
+
+### 4. User Authentication State Management (`useAuthStore`)
+
+The central state management for authentication is handled by `useAuthStore` in `src/store/index.ts`. It pulls data from the NextAuth session and maps it to a custom `User` interface, including application-specific fields like subscription and quota limits.
+
+| Feature | File Path | Key Code Snippet |
+| :--- | :--- | :--- |
+| **State Mapping** | `src/store/index.ts` | ```tsx\nexport const useAuthStore = (): AuthState => {\n  const { data: session, status } = useSession();\n\n  const user: User | null = session?.user?.email\n    ? { \n        id: ((session.user as unknown as { id?: string }).id ?? "") as string,\n        email: session.user.email as string,\n        // ... maps other fields like firstName, subscriptionTier, ocrQuotaUsed\n      }\n    : null;\n\n  return {\n    isAuthenticated: status === "authenticated",\n    user,\n    // ... login/logout functions\n  };\n};``` |
+
+### 5. Cognito Callbacks and User Sync to DynamoDB
+
+The synchronization logic resides within the `jwt` callback of the NextAuth configuration.
+
+| Feature | File Path | Key Code Snippet |
+| :--- | :--- | :--- |
+| **Cognito/DynamoDB Sync** | `src/lib/auth-options.ts` | ```typescript\n// ... inside callbacks: { async jwt({ token, account, profile }) ...\n\n// Sync user to DynamoDB on first login\nif (token.id && token.email) {\n  try {\n    await dynamoDBUsers.upsert({\n      id: token.id as string,\n      email: token.email as string,\n      firstName: token.firstName as string | null,\n      lastName: token.lastName as string | null,\n    });\n  } catch (error) {\n    console.error("Failed to sync user to DynamoDB:", error);\n    // Don't fail auth if DynamoDB sync fails\n  }\n}\n\n// Fetch subscription tier from DynamoDB on every token refresh\nif (token.id) {\n  try {\n    const dbUser = await dynamoDBUsers.get(token.id as string);\n    if (dbUser) {\n      token.subscriptionTier = dbUser.subscriptionTier;\n      token.subscriptionStatus = dbUser.subscriptionStatus;\n      token.ocrQuotaUsed = dbUser.ocrQuotaUsed;\n      token.ocrQuotaLimit = dbUser.ocrQuotaLimit;\n    }\n  } catch (error) {\n    console.error("Failed to fetch user from DynamoDB:", error);\n    // Continue with existing token data\n  }\n}\n\nreturn token;``` |

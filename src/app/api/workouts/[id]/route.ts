@@ -64,7 +64,7 @@ const workoutUpdateSchema = z
     structure: z.record(z.any()).optional(),
     amrapBlocks: z.array(amrapBlockSchema).optional().nullable(),
     emomBlocks: z.array(emomBlockSchema).optional().nullable(),
-    timerConfig: z.record(z.any()).optional(),
+    timerConfig: z.record(z.any()).nullable().optional(),
     blockTimers: z.array(z.any()).optional(),
     aiEnhanced: z.boolean().optional(),
     aiNotes: z.array(z.string().max(500)).max(20).optional(),

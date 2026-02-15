@@ -19,7 +19,7 @@ const coreTier = {
     process.env.NEXT_PUBLIC_STRIPE_PRICE_STARTER_ANNUAL,
   features: [
     'Unlimited workouts',
-    '3 Instagram imports per week',
+    '12 scans per month (OCR + Instagram)',
     '10 AI requests per month',
     'Unlimited history',
     'PR tracking',
@@ -29,13 +29,12 @@ const coreTier = {
   ],
   limits: {
     workoutsWeekly: null, // Unlimited
-    instagramSavesWeekly: 3, // 3 per week
     workoutsMax: null, // Unlimited
+    workoutScansMonthly: 12,
     aiRequestsMonthly: 10,
     historyDays: null, // Unlimited
     aiFeatures: true,
     advancedAnalytics: false,
-    ocrQuotaWeekly: 10,
   },
 } as const
 
@@ -47,8 +46,8 @@ export const SUBSCRIPTION_TIERS = {
     priceId: null, // No Stripe price for free tier
     annualPriceId: null,
     features: [
-      '3 workouts per week',
-      '1 Instagram import per month',
+      'Unlimited workouts',
+      '8 scans per month (OCR + Instagram)',
       '1 AI request per month',
       '90-day history',
       'Basic workout tracking',
@@ -56,14 +55,13 @@ export const SUBSCRIPTION_TIERS = {
       'Basic timers',
     ],
     limits: {
-      workoutsWeekly: 3, // 3 workouts per week
-      instagramSavesMonthly: 1, // 1 Instagram import per month
-      workoutsMax: null, // No total limit, just weekly
+      workoutsWeekly: null, // Unlimited
+      workoutsMax: null, // No total limit
+      workoutScansMonthly: 8,
       aiRequestsMonthly: 1, // 1 AI request per month to try the feature
       historyDays: 90, // 90-day history limit
       aiFeatures: true, // Limited AI access (1/month)
       advancedAnalytics: false,
-      ocrQuotaWeekly: 2,
     },
   },
   core: coreTier,
@@ -76,7 +74,7 @@ export const SUBSCRIPTION_TIERS = {
     annualPriceId: process.env.STRIPE_PRICE_PRO_ANNUAL || process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO_ANNUAL,
     features: [
       'Everything in Core',
-      'Unlimited Instagram imports',
+      '60 scans per month (OCR + Instagram)',
       '30 AI requests per month',
       'Advanced analytics',
       'Volume trends & PR progression',
@@ -86,15 +84,14 @@ export const SUBSCRIPTION_TIERS = {
     ],
     limits: {
       workoutsWeekly: null, // Unlimited
-      instagramSavesWeekly: null, // Unlimited
       workoutsMax: null,
+      workoutScansMonthly: 60,
       aiRequestsMonthly: 30,
       historyDays: null, // Unlimited
       aiFeatures: true,
       advancedAnalytics: true,
       workoutTemplates: true,
       dataExport: true,
-      ocrQuotaWeekly: null,
     },
   },
   elite: {
@@ -115,8 +112,8 @@ export const SUBSCRIPTION_TIERS = {
     ],
     limits: {
       workoutsWeekly: null, // Unlimited
-      instagramSavesWeekly: null, // Unlimited
       workoutsMax: null,
+      workoutScansMonthly: 120,
       aiRequestsMonthly: 100,
       historyDays: null, // Unlimited
       aiFeatures: true,
@@ -126,7 +123,6 @@ export const SUBSCRIPTION_TIERS = {
       customTemplates: true,
       apiAccess: false, // Coming soon
       workoutSharing: true,
-      ocrQuotaWeekly: null,
     },
   },
 } as const
@@ -166,12 +162,10 @@ export function getQuotaLimit(
   tier: SubscriptionTierInput,
   quota:
     | 'workoutsWeekly'
-    | 'instagramSavesWeekly'
-    | 'instagramSavesMonthly'
     | 'workoutsMax'
+    | 'workoutScansMonthly'
     | 'aiRequestsMonthly'
     | 'historyDays'
-    | 'ocrQuotaWeekly'
 ): number | null {
   const normalizedTier = normalizeSubscriptionTier(tier)
   const tierLimits = SUBSCRIPTION_TIERS[normalizedTier].limits as Record<string, number | null | boolean | undefined>

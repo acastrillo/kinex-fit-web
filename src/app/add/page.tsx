@@ -233,7 +233,9 @@ export default function ImportWorkoutPage() {
 
       if (!response.ok) {
         if (response.status === 429) {
-          setOcrError(`OCR quota exceeded. You've used ${data.quotaUsed}/${data.quotaLimit} credits. ${data.subscriptionTier === 'free' ? 'Upgrade to get more!' : ''}`)
+          const used = data.scanQuotaUsed ?? data.quotaUsed
+          const limit = data.scanQuotaLimit ?? data.quotaLimit
+          setOcrError(`Scan quota exceeded. You've used ${used}/${limit} credits. ${data.subscriptionTier === 'free' ? 'Upgrade to get more!' : ''}`)
           return
         }
         throw new Error(data.error || 'OCR processing failed')
@@ -245,7 +247,8 @@ export default function ImportWorkoutPage() {
 
       // Update user quota in store (refresh session)
       if (user) {
-        (user as any).ocrQuotaUsed = data.quotaUsed
+        (user as any).scanQuotaUsed = data.scanQuotaUsed ?? data.quotaUsed;
+        (user as any).ocrQuotaUsed = data.ocrQuotaUsed ?? (user as any).ocrQuotaUsed;
       }
 
       // Process the OCR text and auto-navigate to edit page
@@ -292,7 +295,7 @@ export default function ImportWorkoutPage() {
     if (!url.trim()) return
 
     setIsLoading(true)
-    
+
     try {
       // Step 1: Fetch from Instagram
       const fetchResponse = await fetch('/api/instagram-fetch', {
@@ -312,14 +315,26 @@ export default function ImportWorkoutPage() {
       const fetchData = await fetchResponse.json()
       setFetchedData(fetchData)
       setWorkoutContent(fetchData.content)
-      
+
+      if (user) {
+        const updatedScanUsed =
+          fetchData.scanQuotaUsed ??
+          fetchData.quotaUsed ??
+          (user as any).scanQuotaUsed;
+        const updatedInstagramUsed =
+          fetchData.instagramImportsUsed ?? (user as any).instagramImportsUsed;
+
+        (user as any).scanQuotaUsed = updatedScanUsed;
+        (user as any).instagramImportsUsed = updatedInstagramUsed;
+      }
+
       // Step 2: Process caption into simple rows
       const processResponse = await fetch('/api/ingest', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           caption: fetchData.content,
           url: url.trim()
         }),
@@ -437,10 +452,10 @@ export default function ImportWorkoutPage() {
           {/* Header */}
           <div className="mb-8 text-center">
             <h1 className="text-3xl font-bold text-text-primary mb-2">
-              Add Workout
+              Create Workout
             </h1>
             <p className="text-text-secondary">
-              Generate with AI or import from social media
+              Generate with AI or import from Instagram
             </p>
           </div>
 
@@ -458,7 +473,7 @@ export default function ImportWorkoutPage() {
                     </h3>
                   </div>
                   <p className="text-sm text-text-secondary mb-4">
-                    Describe your perfect workout in natural language and let AI create a personalized training plan with exercises, sets, reps, and weight suggestions based on your training profile.
+                    Describe your workout in plain English. AI creates a complete plan with exercises, sets, and weights.
                   </p>
                   <div className="flex flex-wrap gap-2 text-xs text-text-secondary mb-4 md:mb-0">
                     <span className="px-2 py-1 bg-surface rounded-md">✨ Personalized to your PRs</span>
@@ -494,9 +509,6 @@ export default function ImportWorkoutPage() {
                 <Upload className="h-5 w-5" />
                 <span className="font-semibold">Import Workout</span>
               </div>
-              <p className="text-sm text-text-secondary">
-                Choose how you&apos;d like to import your workout
-              </p>
             </CardHeader>
             <CardContent className="pt-0">
               <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -528,7 +540,7 @@ export default function ImportWorkoutPage() {
                           onChange={(e) => setUrl(e.target.value)}
                           className="flex-1"
                         />
-                        <Button 
+                        <Button
                           onClick={handleFetch}
                           disabled={isLoading || !url.trim()}
                           className="min-w-[80px]"
@@ -541,9 +553,9 @@ export default function ImportWorkoutPage() {
                         </Button>
                       </div>
                       <p className="text-sm text-text-secondary mt-2">
-                        Social media URL format: Paste URLs from Instagram, TikTok, or other platforms
+                        Paste Instagram, TikTok, or other workout URLs
                       </p>
-                      
+
                       {fetchedData ? (
                         <div className="mt-4 p-4 bg-primary/10 border border-primary/20 rounded-lg">
                           <div className="flex items-start space-x-2 mb-3">
@@ -553,7 +565,7 @@ export default function ImportWorkoutPage() {
                               <span className="text-text-secondary"> From @{fetchedData.author?.username}</span>
                             </div>
                           </div>
-                          
+
                           {workoutData && (
                             <div className="mb-3 p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
                               <div className="flex items-center space-x-2 mb-2">
@@ -562,13 +574,13 @@ export default function ImportWorkoutPage() {
                                   Caption processed successfully
                                 </span>
                               </div>
-                              
+
                               {workoutData.summary && (
                                 <p className="text-sm text-text-secondary mb-2">
                                   {workoutData.summary}
                                 </p>
                               )}
-                              
+
                               {workoutData.breakdown && workoutData.breakdown.length > 0 && (
                                 <div className="text-xs text-text-secondary space-y-1">
                                   {workoutData.breakdown.map((item: string, idx: number) => (
@@ -578,11 +590,11 @@ export default function ImportWorkoutPage() {
                               )}
                             </div>
                           )}
-                          
+
                           <div className="mt-3 p-3 bg-surface rounded-lg">
                             <div className="flex items-center justify-between mb-2">
                               <h4 className="text-sm font-medium text-text-primary">
-                                Full Caption Content:
+                                Caption:
                               </h4>
                               <WorkoutEnhancerButton
                                 rawText={fetchedData.content}
@@ -594,7 +606,7 @@ export default function ImportWorkoutPage() {
                             <div className="text-xs text-text-secondary whitespace-pre-wrap max-h-32 overflow-y-auto">
                               {fetchedData.content}
                             </div>
-                            
+
                             {workoutData && workoutData.rows && workoutData.rows.length > 0 && (
                               <div className="mt-3 pt-3 border-t border-border">
                                 <h4 className="text-sm font-medium text-text-primary mb-2">
@@ -624,8 +636,8 @@ export default function ImportWorkoutPage() {
                           <div className="flex items-start space-x-2">
                             <CheckCircle className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
                             <div className="text-sm">
-                              <span className="text-primary font-medium">Instagram import ready:</span>
-                              <span className="text-text-secondary"> Click &quot;Fetch&quot; after entering an Instagram URL to automatically extract the workout content.</span>
+                              <span className="text-primary font-medium">Ready to import</span>
+                              <span className="text-text-secondary"> - Enter Instagram URL and click Fetch</span>
                             </div>
                           </div>
                         </div>
@@ -643,15 +655,15 @@ export default function ImportWorkoutPage() {
                         </label>
                         {user && (() => {
                           const tier = (user as any).subscriptionTier || 'free'
-                          const quotaLimit = getQuotaLimit(tier, 'ocrQuotaWeekly')
-                          const quotaUsed = (user as any).ocrQuotaUsed || 0
+                          const quotaLimit = getQuotaLimit(tier, 'workoutScansMonthly')
+                          const quotaUsed = (user as any).scanQuotaUsed ?? (((user as any).ocrQuotaUsed || 0) + ((user as any).instagramImportsUsed || 0))
                           const quotaRemaining = quotaLimit === null ? 'Unlimited' : `${quotaLimit - quotaUsed}/${quotaLimit}`
                           const isLow = quotaLimit !== null && (quotaLimit - quotaUsed) <= 1
                           const isExhausted = quotaLimit !== null && (quotaLimit - quotaUsed) <= 0
 
                           return (
                             <div className={`text-xs ${isExhausted ? 'text-red-500 font-semibold' : isLow ? 'text-amber-500 font-medium' : 'text-text-secondary'}`}>
-                              OCR: {quotaRemaining} {quotaLimit !== null && 'remaining'}
+                              Scans: {quotaRemaining} {quotaLimit !== null && 'remaining'}
                             </div>
                           )
                         })()}
@@ -659,21 +671,21 @@ export default function ImportWorkoutPage() {
 
                       {user && (() => {
                         const tier = (user as any).subscriptionTier || 'free'
-                        const quotaLimit = getQuotaLimit(tier, 'ocrQuotaWeekly')
-                        const quotaUsed = (user as any).ocrQuotaUsed || 0
+                        const quotaLimit = getQuotaLimit(tier, 'workoutScansMonthly')
+                        const quotaUsed = (user as any).scanQuotaUsed ?? (((user as any).ocrQuotaUsed || 0) + ((user as any).instagramImportsUsed || 0))
                         const isExhausted = quotaLimit !== null && (quotaLimit - quotaUsed) <= 0
 
                         if (isExhausted) {
                           return (
                             <div className="mb-3 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
                               <p className="text-sm text-red-500 mb-2">
-                                You&apos;ve used all your OCR scans this week. {tier === 'free' ? 'Upgrade to get more!' : 'Your quota resets weekly.'}
+                                You&apos;ve used all your scans this month. {tier === 'free' ? 'Upgrade to get more!' : 'Your quota resets monthly.'}
                               </p>
                               {tier === 'free' && (
                                 <Link href="/subscription">
                                   <Button variant="outline" size="sm" className="w-full">
                                     <Crown className="h-3 w-3 mr-2" />
-                                    Upgrade for Unlimited Scans
+                                    Upgrade for More Scans
                                   </Button>
                                 </Link>
                               )}
@@ -688,11 +700,10 @@ export default function ImportWorkoutPage() {
                         onDrop={handleDrop}
                         onDragOver={handleDragOver}
                         onDragLeave={handleDragLeave}
-                        className={`relative border-2 border-dashed rounded-lg p-8 transition-colors ${
-                          isDragOver
-                            ? 'border-primary bg-primary/10'
-                            : 'border-border bg-surface hover:border-primary/50'
-                        }`}
+                        className={`relative border-2 border-dashed rounded-lg p-8 transition-colors ${isDragOver
+                          ? 'border-primary bg-primary/10'
+                          : 'border-border bg-surface hover:border-primary/50'
+                          }`}
                       >
                         {imagePreview ? (
                           <div className="space-y-4">
@@ -723,8 +734,8 @@ export default function ImportWorkoutPage() {
                                 {ocrError.includes('quota exceeded') && (
                                   <UpgradePrompt
                                     compact
-                                    reason="Upgrade to get more OCR scans per week"
-                                    feature="unlimited OCR"
+                                    reason="Upgrade to get more scans per month"
+                                    feature="more scan credits"
                                   />
                                 )}
                               </div>
@@ -732,15 +743,15 @@ export default function ImportWorkoutPage() {
 
                             {user && (() => {
                               const tier = (user as any).subscriptionTier || 'free'
-                              const quotaLimit = getQuotaLimit(tier, 'ocrQuotaWeekly')
-                              const quotaUsed = (user as any).ocrQuotaUsed || 0
+                              const quotaLimit = getQuotaLimit(tier, 'workoutScansMonthly')
+                              const quotaUsed = (user as any).scanQuotaUsed ?? (((user as any).ocrQuotaUsed || 0) + ((user as any).instagramImportsUsed || 0))
                               const quotaRemaining = quotaLimit === null ? 'Unlimited' : `${quotaLimit - quotaUsed}/${quotaLimit}`
                               const isLow = quotaLimit !== null && (quotaLimit - quotaUsed) <= 1
 
                               return (
                                 <div className="space-y-2">
                                   <div className={`text-sm text-center ${isLow ? 'text-amber-500 font-medium' : 'text-text-secondary'}`}>
-                                    OCR Credits: {quotaRemaining} remaining this week
+                                    Scan Credits: {quotaRemaining} remaining this month
                                   </div>
                                   {isLow && tier === 'free' && (
                                     <div className="text-center">
@@ -761,8 +772,8 @@ export default function ImportWorkoutPage() {
                               onClick={processImageWithOCR}
                               disabled={isProcessingOCR || Boolean(user && (() => {
                                 const tier = (user as any).subscriptionTier || 'free'
-                                const quotaLimit = getQuotaLimit(tier, 'ocrQuotaWeekly')
-                                const quotaUsed = (user as any).ocrQuotaUsed || 0
+                                const quotaLimit = getQuotaLimit(tier, 'workoutScansMonthly')
+                                const quotaUsed = (user as any).scanQuotaUsed ?? (((user as any).ocrQuotaUsed || 0) + ((user as any).instagramImportsUsed || 0))
                                 return quotaLimit !== null && (quotaLimit - quotaUsed) <= 0
                               })())}
                             >

@@ -9,6 +9,10 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import type { TrainingProfile } from "./training-profile";
 import type { WorkoutCardLayout } from "../types/workout-card";
+import type {
+  WorkoutExerciseMetric,
+  WorkoutPRHighlight,
+} from "../types/workout-completion";
 import { normalizeSubscriptionTier } from "./subscription-tiers";
 
 // Lazy-initialized DynamoDB client singleton
@@ -65,6 +69,8 @@ export interface DynamoDBUser {
   ocrQuotaUsed: number;
   ocrQuotaLimit: number;
   ocrQuotaResetDate?: string | null;
+  scanQuotaUsed?: number;
+  scanQuotaResetDate?: string | null;
   workoutsSaved: number;
   workoutsWeeklyUsed?: number;
   lastWorkoutReset?: string | null;
@@ -248,8 +254,10 @@ export const dynamoDBUsers = {
 
       // Usage tracking defaults
       ocrQuotaUsed: user.ocrQuotaUsed || 0,
-      ocrQuotaLimit: user.ocrQuotaLimit || 2, // Free tier default: 2 per week
+      ocrQuotaLimit: user.ocrQuotaLimit || 2, // Legacy OCR limit (deprecated; use tier limits)
       ocrQuotaResetDate: user.ocrQuotaResetDate || now,
+      scanQuotaUsed: user.scanQuotaUsed || 0,
+      scanQuotaResetDate: user.scanQuotaResetDate || now,
       workoutsSaved: user.workoutsSaved || 0,
       workoutsWeeklyUsed: user.workoutsWeeklyUsed || 0,
       lastWorkoutReset: user.lastWorkoutReset || now,
@@ -425,7 +433,7 @@ export const dynamoDBUsers = {
   },
 
   /**
-   * Reset OCR quota (weekly reset)
+   * Reset OCR quota (legacy, use resetScanQuota for combined scans)
    */
   async resetOCRQuota(userId: string): Promise<void> {
     try {
@@ -455,7 +463,7 @@ export const dynamoDBUsers = {
    */
   async consumeQuota(
     userId: string,
-    field: keyof Pick<DynamoDBUser, 'ocrQuotaUsed' | 'aiRequestsUsed' | 'instagramImportsUsed' | 'workoutsWeeklyUsed'>,
+    field: keyof Pick<DynamoDBUser, 'ocrQuotaUsed' | 'aiRequestsUsed' | 'instagramImportsUsed' | 'workoutsWeeklyUsed' | 'scanQuotaUsed'>,
     limit: number
   ): Promise<{ success: boolean; newValue?: number }> {
     if (limit <= 0) {
@@ -565,7 +573,7 @@ export const dynamoDBUsers = {
   },
 
   /**
-   * Reset Instagram import quota (weekly reset for core tier, monthly for free tier)
+   * Reset Instagram import quota (legacy; use resetScanQuota for combined scans)
    */
   async resetInstagramQuota(userId: string): Promise<void> {
     try {
@@ -585,6 +593,31 @@ export const dynamoDBUsers = {
       );
     } catch (error) {
       console.error("Error resetting Instagram quota in DynamoDB:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Reset combined scan quota (monthly reset)
+   */
+  async resetScanQuota(userId: string): Promise<void> {
+    try {
+      const now = new Date().toISOString();
+      await getDynamoDb().send(
+        new UpdateCommand({
+          TableName: USERS_TABLE,
+          Key: { id: userId },
+          UpdateExpression:
+            "SET scanQuotaUsed = :zero, ocrQuotaUsed = :zero, instagramImportsUsed = :zero, scanQuotaResetDate = :resetDate, ocrQuotaResetDate = :resetDate, lastInstagramImportReset = :resetDate, updatedAt = :updatedAt",
+          ExpressionAttributeValues: {
+            ":zero": 0,
+            ":resetDate": now,
+            ":updatedAt": now,
+          },
+        })
+      );
+    } catch (error) {
+      console.error("Error resetting scan quota in DynamoDB:", error);
       throw error;
     }
   },
@@ -1827,6 +1860,8 @@ export interface DynamoDBWorkoutCompletion {
   durationSeconds?: number | null; // How long the workout took
   durationMinutes?: number | null; // Convenience field
   notes?: string | null; // Optional notes about the completion
+  exerciseMetrics?: WorkoutExerciseMetric[] | null; // Per-exercise session metrics
+  prHighlights?: WorkoutPRHighlight[] | null; // PRs detected during this session
   createdAt: string; // ISO timestamp when record was created
 }
 
@@ -1931,6 +1966,8 @@ export const dynamoDBWorkoutCompletions = {
       durationSeconds: completion.durationSeconds ?? null,
       durationMinutes: completion.durationMinutes ?? null,
       notes: completion.notes ?? null,
+      exerciseMetrics: completion.exerciseMetrics ?? null,
+      prHighlights: completion.prHighlights ?? null,
       createdAt: now,
     };
 

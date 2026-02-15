@@ -15,7 +15,12 @@ export type TimerType =
   | 'EMOM'
   | 'AMRAP'
   | 'INTERVAL_WORK_REST'
-  | 'TABATA';
+  | 'TABATA'
+  | 'FOR_TIME'
+  | 'CHIPPER'
+  | 'LADDER'
+  | 'DEATH_BY'
+  | 'STACKED';
 
 // ============================================================================
 // Timer Parameter Types (Discriminated Union)
@@ -63,13 +68,86 @@ export interface TabataParams {
 }
 
 /**
- * Union of all supported timer parameter types
+ * For Time
+ * Count up until workout complete, optional time cap
  */
-export type TimerParams =
+export interface ForTimeParams {
+  kind: 'FOR_TIME';
+  timeCapSeconds?: number;  // Optional maximum time cap
+}
+
+/**
+ * Chipper
+ * Sequential exercises, complete all reps before moving on
+ */
+export interface ChipperParams {
+  kind: 'CHIPPER';
+  timeCapSeconds?: number;  // Optional time cap
+  exercises: Array<{
+    exerciseId: string;
+    exerciseName: string;
+    targetReps: number;
+  }>;
+}
+
+/**
+ * Ladder
+ * Increasing/decreasing reps per round (e.g., 21-15-9, pyramid)
+ */
+export interface LadderParams {
+  kind: 'LADDER';
+  pattern: number[];                              // [21, 15, 9] or [1,2,3,4,5,4,3,2,1]
+  direction: 'ascending' | 'descending' | 'pyramid';
+  restBetweenRoundsSeconds?: number;              // Optional rest between rounds
+  timeCapSeconds?: number;                        // Optional time cap
+}
+
+/**
+ * Death By
+ * Minute 1 = 1 rep, Minute 2 = 2 reps, until failure
+ */
+export interface DeathByParams {
+  kind: 'DEATH_BY';
+  exerciseName: string;           // The exercise to perform
+  startingReps: number;           // Starting reps (usually 1)
+  incrementPerMinute: number;     // How many reps to add each minute (usually 1)
+  maxMinutes?: number;            // Optional cap on minutes
+}
+
+/**
+ * Non-stacked timer params (for use in stacked blocks)
+ * All timer types except STACKED to prevent infinite nesting
+ */
+export type SingleTimerParams =
   | EMOMParams
   | AMRAPParams
   | IntervalWorkRestParams
-  | TabataParams;
+  | TabataParams
+  | ForTimeParams
+  | ChipperParams
+  | LadderParams
+  | DeathByParams;
+
+/**
+ * Stacked/Mixed
+ * Multiple blocks of different timer types
+ */
+export interface StackedParams {
+  kind: 'STACKED';
+  blocks: Array<{
+    id: string;
+    label: string;                // "Part A", "Block 1", etc.
+    timerParams: SingleTimerParams;  // Any timer type except nested stacked
+    restAfterSeconds?: number;    // Rest time after this block
+  }>;
+}
+
+/**
+ * Union of all supported timer parameter types
+ */
+export type TimerParams =
+  | SingleTimerParams
+  | StackedParams;
 
 // ============================================================================
 // Timer Segments & Runtime State

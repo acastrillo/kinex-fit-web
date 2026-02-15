@@ -20,9 +20,15 @@ import {
   Legend,
 } from "recharts"
 import { Scale, TrendingUp, TrendingDown, Minus, Plus, Trash2 } from "lucide-react"
-import { dynamoDBBodyWeight } from "@/lib/dynamodb-body-metrics"
 import { calculateWeightChangeRate, formatBodyWeight, type BodyWeightEntry } from "@/lib/body-metrics"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
+
+type BodyMetricApi = {
+  date: string
+  weight?: number | null
+  unit?: "metric" | "imperial"
+  notes?: string | null
+}
 
 export default function BodyWeightPage() {
   const { isAuthenticated, user } = useAuthStore()
@@ -37,12 +43,32 @@ export default function BodyWeightPage() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
 
   const loadEntries = useCallback(async () => {
-    if (!user?.id) return
+    if (!user?.id) {
+      setEntries([])
+      setIsLoading(false)
+      return
+    }
 
     setIsLoading(true)
     try {
-      const data = await dynamoDBBodyWeight.list(user.id, 365) // Last year
-      setEntries(data)
+      const response = await fetch("/api/body-metrics?limit=365")
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || "Failed to load body weight entries")
+      }
+
+      const { metrics } = await response.json()
+      const mappedEntries = (metrics as BodyMetricApi[])
+        .filter((metric) => typeof metric.weight === "number")
+        .map((metric) => ({
+          userId: user.id,
+          date: metric.date,
+          weight: metric.weight as number,
+          unit: (metric.unit === "metric" ? "kg" : "lbs") as "kg" | "lbs",
+          notes: metric.notes || undefined,
+        }))
+
+      setEntries(mappedEntries)
     } catch (error) {
       console.error("Error loading body weight entries:", error)
     } finally {
@@ -68,7 +94,24 @@ export default function BodyWeightPage() {
         notes: notes || undefined,
       }
 
-      await dynamoDBBodyWeight.log(entry)
+      const response = await fetch("/api/body-metrics", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          date: entry.date,
+          weight: entry.weight,
+          unit: entry.unit === "kg" ? "metric" : "imperial",
+          notes: entry.notes ?? null,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || "Failed to save body weight")
+      }
+
       await loadEntries()
 
       // Reset form
@@ -88,7 +131,15 @@ export default function BodyWeightPage() {
     if (!confirm("Delete this weight entry?")) return
 
     try {
-      await dynamoDBBodyWeight.delete(user.id, date)
+      const response = await fetch(`/api/body-metrics/${encodeURIComponent(date)}`, {
+        method: "DELETE",
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || "Failed to delete body weight")
+      }
+
       await loadEntries()
     } catch (error) {
       console.error("Error deleting entry:", error)

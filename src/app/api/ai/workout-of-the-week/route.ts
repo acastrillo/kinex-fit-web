@@ -14,10 +14,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedSession } from '@/lib/api-auth';
 import { dynamoDBUsers, dynamoDBWorkouts, DynamoDBWorkout } from '@/lib/dynamodb';
 import { generateWorkout, validateGeneratedWorkout } from '@/lib/ai/workout-generator';
-import { getAIRequestLimit, normalizeSubscriptionTier } from '@/lib/subscription-tiers';
+import { normalizeSubscriptionTier } from '@/lib/subscription-tiers';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { hasRole } from '@/lib/rbac';
-import { isMonthlyResetDue } from '@/lib/quota-reset';
 
 interface WorkoutOfTheWeekResponse {
   success: boolean;
@@ -29,7 +28,6 @@ interface WorkoutOfTheWeekResponse {
     outputTokens: number;
     estimatedCost: number;
   };
-  quotaRemaining?: number;
   error?: string;
 }
 
@@ -141,17 +139,11 @@ export async function GET(req: NextRequest): Promise<NextResponse<WorkoutOfTheWe
     const tier = normalizeSubscriptionTier(user.subscriptionTier);
     const isAdmin = hasRole(user, 'admin');
 
-    let aiUsed = user.aiRequestsUsed || 0;
-    if (!isAdmin && isMonthlyResetDue(user.lastAiRequestReset)) {
-      await dynamoDBUsers.resetAIQuota(userId);
-      aiUsed = 0;
-    }
-
     if (!isAdmin && tier === 'free') {
       return NextResponse.json(
         {
           success: false,
-          error: 'Workout of the Week is only available to paid subscribers. Upgrade to Core ($8.99/mo) or Pro ($24.99/mo) to unlock this feature.',
+          error: 'Workout of the Week is only available to paid subscribers. Upgrade to Core ($8.99/mo) or Pro ($13.99/mo) to unlock this feature.',
         },
         { status: 403 }
       );
@@ -187,28 +179,6 @@ export async function GET(req: NextRequest): Promise<NextResponse<WorkoutOfTheWe
       }
     }
 
-    // Check AI quota
-    const aiLimit = getAIRequestLimit(tier);
-
-    // ADMIN BYPASS: Admins have unlimited AI quotas
-    if (!isAdmin && aiLimit <= 0) {
-      const upgradeMessage = aiLimit === 0
-        ? 'AI workout generation is not available on the free tier. Upgrade to Core ($8.99/mo) for 10 AI requests per month.'
-        : `You've reached your AI request limit (${aiUsed}/${aiLimit} used this month). Upgrade to Pro for more AI requests.`;
-
-      return NextResponse.json(
-        {
-          success: false,
-          error: upgradeMessage,
-          quotaRemaining: 0,
-          tier,
-          aiUsed,
-          aiLimit,
-        },
-        { status: 403 }
-      );
-    }
-
     // Rate limiting (30 AI requests per hour across all AI features)
     const rateLimit = await checkRateLimit(userId, 'api:ai');
     if (!rateLimit.success) {
@@ -230,26 +200,6 @@ export async function GET(req: NextRequest): Promise<NextResponse<WorkoutOfTheWe
           },
         }
       );
-    }
-
-    let aiUsedAfter = aiUsed;
-    if (!isAdmin) {
-      const consumeResult = await dynamoDBUsers.consumeQuota(userId, 'aiRequestsUsed', aiLimit);
-      if (!consumeResult.success) {
-        const upgradeMessage = `You've reached your AI request limit (${aiUsed}/${aiLimit} used this month). Upgrade to Pro for more AI requests.`;
-        return NextResponse.json(
-          {
-            success: false,
-            error: upgradeMessage,
-            quotaRemaining: 0,
-            tier,
-            aiUsed,
-            aiLimit,
-          },
-          { status: 403 }
-        );
-      }
-      aiUsedAfter = consumeResult.newValue ?? aiUsed + 1;
     }
 
     // Determine workout focus based on recent activity
@@ -341,7 +291,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<WorkoutOfTheWe
         outputTokens: result.bedrockResponse.usage.outputTokens,
         estimatedCost: result.bedrockResponse.cost?.total || 0,
       },
-      quotaRemaining: isAdmin ? 999999 : Math.max(0, aiLimit - aiUsedAfter),
+      quotaRemaining: isAdmin ? 999999 : 0,
     });
   } catch (error) {
     console.error('[WOW] Error:', error);

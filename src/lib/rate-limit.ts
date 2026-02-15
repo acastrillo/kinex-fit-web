@@ -73,8 +73,8 @@ export const RATE_LIMITS = {
     window: '1 h', // 10 OCR requests per hour (very expensive)
   },
   'api:instagram': {
-    requests: 20,
-    window: '1 h', // 20 Instagram fetches per hour (Apify costs)
+    requests: 60,
+    window: '1 h', // 60 Instagram fetches per hour (Apify costs)
   },
   'api:ai': {
     requests: 30,

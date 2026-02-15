@@ -219,6 +219,7 @@ export default function EditWorkoutPage() {
           weight: exercise.weight || "",
           distance: exercise.distance || null,
           timing: exercise.timing || null,
+          time: exercise.time || null,
           restSeconds:
             typeof exercise.restSeconds === "number"
               ? exercise.restSeconds
@@ -534,6 +535,7 @@ export default function EditWorkoutPage() {
             structure: structureWithLayout,
             amrapBlocks: amrapBlocksPayload,
             emomBlocks: emomBlocksPayload,
+            timerConfig: workoutMeta.timerConfig ?? null,
           }),
         });
         if (!response.ok) {

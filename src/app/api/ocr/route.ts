@@ -7,7 +7,7 @@ import { dynamoDBUsers } from '@/lib/dynamodb';
 import { getQuotaLimit, normalizeSubscriptionTier } from '@/lib/stripe';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { hasRole } from '@/lib/rbac';
-import { isWeeklyResetDue } from '@/lib/quota-reset';
+import { isMonthlyResetDue } from '@/lib/quota-reset';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB (Textract sync limit)
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'application/pdf'];
@@ -76,21 +76,24 @@ export async function POST(req: Request) {
 
     // Get quota limit based on subscription tier
     const tier = normalizeSubscriptionTier(user.subscriptionTier);
-    const weeklyLimit = getQuotaLimit(tier, 'ocrQuotaWeekly');
+    const scanLimit = getQuotaLimit(tier, 'workoutScansMonthly');
 
+    let scanUsed = user.scanQuotaUsed ?? ((user.ocrQuotaUsed || 0) + (user.instagramImportsUsed || 0));
     let ocrUsed = user.ocrQuotaUsed || 0;
-    if (!isAdmin && weeklyLimit !== null && isWeeklyResetDue(user.ocrQuotaResetDate)) {
-      await dynamoDBUsers.resetOCRQuota(userId);
+    const lastScanReset = user.scanQuotaResetDate || user.ocrQuotaResetDate || user.lastInstagramImportReset;
+    if (!isAdmin && scanLimit !== null && isMonthlyResetDue(lastScanReset)) {
+      await dynamoDBUsers.resetScanQuota(userId);
+      scanUsed = 0;
       ocrUsed = 0;
     }
 
-    if (!isAdmin && weeklyLimit !== null && weeklyLimit <= 0) {
+    if (!isAdmin && scanLimit !== null && scanLimit <= 0) {
       return NextResponse.json(
         {
-          error: 'OCR quota exceeded',
-          message: 'You have reached your weekly OCR limit. Upgrade your subscription for more scans.',
-          quotaUsed: ocrUsed,
-          quotaLimit: weeklyLimit,
+          error: 'Scan quota exceeded',
+          message: 'You have reached your monthly scan limit. Upgrade your subscription for more scans.',
+          quotaUsed: scanUsed,
+          quotaLimit: scanLimit,
           subscriptionTier: user.subscriptionTier
         },
         { status: 429 }
@@ -137,22 +140,25 @@ export async function POST(req: Request) {
 
     const bytes = Buffer.from(arrayBuffer);
 
+    let scanUsedAfter = scanUsed;
     let ocrUsedAfter = ocrUsed;
-    if (!isAdmin && weeklyLimit !== null) {
-      const consumeResult = await dynamoDBUsers.consumeQuota(userId, 'ocrQuotaUsed', weeklyLimit);
+    if (!isAdmin && scanLimit !== null) {
+      const consumeResult = await dynamoDBUsers.consumeQuota(userId, 'scanQuotaUsed', scanLimit);
       if (!consumeResult.success) {
         return NextResponse.json(
           {
-            error: 'OCR quota exceeded',
-            message: 'You have reached your weekly OCR limit. Upgrade your subscription for more scans.',
-            quotaUsed: ocrUsed,
-            quotaLimit: weeklyLimit,
+            error: 'Scan quota exceeded',
+            message: 'You have reached your monthly scan limit. Upgrade your subscription for more scans.',
+            quotaUsed: scanUsed,
+            quotaLimit: scanLimit,
             subscriptionTier: user.subscriptionTier
           },
           { status: 429 }
         );
       }
-      ocrUsedAfter = consumeResult.newValue ?? ocrUsed + 1;
+      scanUsedAfter = consumeResult.newValue ?? scanUsed + 1;
+      await dynamoDBUsers.incrementOCRUsage(userId);
+      ocrUsedAfter = ocrUsed + 1;
     }
     const cmd = new DetectDocumentTextCommand({
       Document: { Bytes: bytes }, // Textract allows bytes or S3Object
@@ -174,14 +180,17 @@ export async function POST(req: Request) {
         : undefined;
 
     // Get updated quota info
-    const currentLimit = isAdmin ? null : getQuotaLimit(tier, 'ocrQuotaWeekly');
+    const currentLimit = isAdmin ? null : getQuotaLimit(tier, 'workoutScansMonthly');
 
     return NextResponse.json({
       text,
       confidence,
-      quotaUsed: isAdmin ? ocrUsed : ocrUsedAfter,
+      quotaUsed: isAdmin ? scanUsed : scanUsedAfter,
       quotaLimit: currentLimit,
-      isUnlimited: isAdmin || currentLimit === null
+      isUnlimited: isAdmin || currentLimit === null,
+      scanQuotaUsed: isAdmin ? scanUsed : scanUsedAfter,
+      scanQuotaLimit: currentLimit,
+      ocrQuotaUsed: isAdmin ? ocrUsed : ocrUsedAfter,
     });
   } catch (err: unknown) {
     return NextResponse.json({ error: String((err as Error)?.message || err) }, { status: 500 });

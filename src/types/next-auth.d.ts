@@ -11,6 +11,8 @@ declare module "next-auth" {
       subscriptionStatus?: string;
       ocrQuotaUsed?: number;
       ocrQuotaLimit?: number;
+      scanQuotaUsed?: number;
+      instagramImportsUsed?: number;
       workoutsSaved?: number;
       workoutsWeeklyUsed?: number;
       aiRequestsUsed?: number;
@@ -29,10 +31,12 @@ declare module "next-auth/jwt" {
     firstName?: string | null;
     lastName?: string | null;
     subscriptionTier?: string;
-    subscriptionStatus?: string;
-    ocrQuotaUsed?: number;
-    ocrQuotaLimit?: number;
-    workoutsSaved?: number;
+      subscriptionStatus?: string;
+      ocrQuotaUsed?: number;
+      ocrQuotaLimit?: number;
+      scanQuotaUsed?: number;
+      instagramImportsUsed?: number;
+      workoutsSaved?: number;
     workoutsWeeklyUsed?: number;
     aiRequestsUsed?: number;
     onboardingCompleted?: boolean;

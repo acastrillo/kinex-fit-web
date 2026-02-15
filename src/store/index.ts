@@ -13,6 +13,8 @@ interface SessionUser {
   subscriptionStatus?: string;
   ocrQuotaUsed?: number;
   ocrQuotaLimit?: number;
+  scanQuotaUsed?: number;
+  instagramImportsUsed?: number;
   workoutsSaved?: number;
   workoutsWeeklyUsed?: number;
   aiRequestsUsed?: number;
@@ -31,6 +33,8 @@ interface User {
   subscriptionStatus?: string;
   ocrQuotaUsed?: number;
   ocrQuotaLimit?: number;
+  scanQuotaUsed?: number;
+  instagramImportsUsed?: number;
   workoutsSaved?: number;
   workoutsWeeklyUsed?: number;
   aiRequestsUsed?: number;
@@ -70,6 +74,8 @@ export const useAuthStore = (): AuthState => {
         subscriptionStatus: sessionUser.subscriptionStatus ?? "active",
         ocrQuotaUsed: sessionUser.ocrQuotaUsed ?? 0,
         ocrQuotaLimit: sessionUser.ocrQuotaLimit ?? 2,
+        scanQuotaUsed: sessionUser.scanQuotaUsed ?? 0,
+        instagramImportsUsed: sessionUser.instagramImportsUsed ?? 0,
         workoutsSaved: sessionUser.workoutsSaved ?? 0,
         workoutsWeeklyUsed: sessionUser.workoutsWeeklyUsed ?? 0,
         aiRequestsUsed: sessionUser.aiRequestsUsed ?? 0,

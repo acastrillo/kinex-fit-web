@@ -19,7 +19,7 @@ export interface TimerSuggestion {
   workoutStyle: 'hyrox' | 'metcon' | 'strength' | 'endurance' | 'recovery' | 'mixed' | 'unknown';
   primaryGoal: 'conditioning' | 'strength' | 'hypertrophy' | 'mobility' | 'skill' | 'mixed' | 'unknown';
   suggestedTimer: {
-    type: 'EMOM' | 'AMRAP' | 'INTERVAL_WORK_REST' | 'TABATA';
+    type: 'EMOM' | 'AMRAP' | 'INTERVAL_WORK_REST' | 'TABATA' | 'FOR_TIME' | 'CHIPPER' | 'LADDER' | 'DEATH_BY' | 'STACKED';
     reason: string;
     params: TimerParams;
   } | null;
@@ -86,54 +86,55 @@ Primary goals (primaryGoal):
 - "unknown"      → Not clear from the data
 
 Timer types you can choose from (suggestedTimer.type):
-Only suggest these 4 timer types that are currently supported:
+Select the most appropriate timer from these 9 supported types:
 
 1. "INTERVAL_WORK_REST" - Alternating work and rest periods for specified rounds
    - Best for: Circuit training, HIIT, boot camp style workouts
-   - Required params:
-     {
-       "kind": "INTERVAL_WORK_REST",
-       "workSeconds": <integer>,     // Typical: 30-60 seconds
-       "restSeconds": <integer>,     // Typical: 10-30 seconds
-       "totalRounds": <integer>,     // Typical: 8-12 rounds
-       "prepSeconds": <integer>      // Optional prep time, typical: 10 seconds
-     }
+   - Required params: {"kind": "INTERVAL_WORK_REST", "workSeconds": 30-60, "restSeconds": 10-30, "totalRounds": 8-12}
 
 2. "EMOM" - Every Minute On the Minute
    - Best for: Fixed time intervals with work + rest within each minute
-   - Required params:
-     {
-       "kind": "EMOM",
-       "intervalSeconds": <integer>,   // Always 60 for EMOM
-       "totalMinutes": <integer>       // Typical: 10-30 minutes
-     }
+   - Required params: {"kind": "EMOM", "intervalSeconds": 60, "totalMinutes": 10-30}
 
 3. "AMRAP" - As Many Rounds As Possible within time limit
    - Best for: Maximum volume in fixed time, density work
-   - Required params:
-     {
-       "kind": "AMRAP",
-       "durationSeconds": <integer>   // Typical: 300-1200 (5-20 minutes)
-     }
+   - Required params: {"kind": "AMRAP", "durationSeconds": 300-1200}
 
 4. "TABATA" - High-intensity intervals (typically 20s work, 10s rest)
    - Best for: Short, intense bursts with brief rest
-   - Required params:
-     {
-       "kind": "TABATA",
-       "workSeconds": <integer>,      // Typical: 20 seconds
-       "restSeconds": <integer>,      // Typical: 10 seconds
-       "rounds": <integer>,           // Typical: 8 rounds
-       "prepSeconds": <integer>       // Optional prep time, typical: 10 seconds
-     }
+   - Required params: {"kind": "TABATA", "workSeconds": 20, "restSeconds": 10, "rounds": 8}
+
+5. "FOR_TIME" - Complete workout as fast as possible
+   - Best for: Benchmark WODs, task completion workouts (Fran, Grace, Murph)
+   - Required params: {"kind": "FOR_TIME", "timeCapSeconds": 1200} // Optional time cap
+
+6. "CHIPPER" - Sequential exercises, complete all reps before moving on
+   - Best for: Long, linear workouts with one pass through exercises
+   - Required params: {"kind": "CHIPPER", "exercises": [{exerciseId, exerciseName, targetReps}], "timeCapSeconds": 1800}
+
+7. "LADDER" - Increasing/decreasing reps per round
+   - Best for: 21-15-9 style workouts, pyramid schemes
+   - Required params: {"kind": "LADDER", "pattern": [21,15,9], "direction": "descending", "restBetweenRoundsSeconds": 0}
+
+8. "DEATH_BY" - Add reps each minute until failure
+   - Best for: Progressive overload challenges (Death by Burpees)
+   - Required params: {"kind": "DEATH_BY", "exerciseName": "Burpees", "startingReps": 1, "incrementPerMinute": 1, "maxMinutes": 20}
+
+9. "STACKED" - Multiple timer blocks combined
+   - Best for: Complex workouts with multiple distinct parts (Part A + Part B)
+   - Required params: {"kind": "STACKED", "blocks": [{id, label, timerParams, restAfterSeconds}]}
 
 Selection guidelines:
-- Hyrox / metcon with multiple stations → EMOM, AMRAP, or INTERVAL_WORK_REST
+- "21-15-9", "Fran", "Grace", task completion → FOR_TIME or LADDER
+- Sequential long chipper → CHIPPER
+- Progressive difficulty → DEATH_BY or LADDER
+- Multi-part workout → STACKED
+- Hyrox / metcon stations → EMOM, AMRAP, or INTERVAL_WORK_REST
 - High-intensity circuits → TABATA or INTERVAL_WORK_REST
 - Timed density work → AMRAP
 - Fixed work intervals → EMOM
-- Traditional strength training → Usually no timer needed (return null)
-- Long endurance work → Usually no timer needed (return null)
+- Traditional strength → Usually no timer (return null)
+- Long endurance → Usually no timer (return null)
 
 If no timer is appropriate (e.g., pure strength training with long rest periods), set "suggestedTimer" to null.
 

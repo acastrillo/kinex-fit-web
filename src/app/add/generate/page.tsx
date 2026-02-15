@@ -141,7 +141,7 @@ export default function GenerateWorkoutPage() {
               </h1>
             </div>
             <p className="text-text-secondary">
-              Describe your perfect workout and let AI create a personalized training plan
+              Describe your workout. AI builds the plan.
             </p>
           </div>
 
@@ -184,9 +184,9 @@ export default function GenerateWorkoutPage() {
                 {/* Input Card */}
                 <Card>
                   <CardHeader>
-                    <CardTitle>Describe Your Workout</CardTitle>
+                    <CardTitle>What workout do you want?</CardTitle>
                     <CardDescription>
-                      Tell us what you want to work on, how much time you have, and any equipment preferences
+                      Be specific: movement type, duration, equipment
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -207,7 +207,7 @@ export default function GenerateWorkoutPage() {
                     {/* Example Prompts */}
                     <div className="space-y-2">
                       <p className="text-sm font-medium text-text-primary">
-                        Example prompts:
+                        Try these:
                       </p>
                       <div className="flex flex-wrap gap-2">
                         {examplePrompts.map((example, index) => (
@@ -229,7 +229,7 @@ export default function GenerateWorkoutPage() {
                     <Alert>
                       <Info className="h-4 w-4" />
                       <AlertDescription className="text-sm">
-                        The AI will use your <Link href="/settings/training-profile" className="text-primary hover:underline">Training Profile</Link> to personalize exercise selection and weight suggestions.
+                        Uses your <Link href="/settings/training-profile" className="text-primary hover:underline">Training Profile</Link> for personalized weights.
                       </AlertDescription>
                     </Alert>
 
@@ -278,7 +278,7 @@ export default function GenerateWorkoutPage() {
                 {/* Feature Info Card */}
                 <Card className="border-primary/20 bg-primary/5">
                   <CardHeader>
-                    <CardTitle className="text-lg">How It Works</CardTitle>
+                    <CardTitle className="text-lg">How it works</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3 text-sm text-text-secondary">
                     <div className="flex gap-3">
@@ -286,8 +286,8 @@ export default function GenerateWorkoutPage() {
                         1
                       </div>
                       <div>
-                        <p className="font-medium text-text-primary">Describe Your Goal</p>
-                        <p>Tell us what you want to train, how long, and what equipment you have</p>
+                        <p className="font-medium text-text-primary">Describe your goal</p>
+                        <p>What to train, how long, what equipment</p>
                       </div>
                     </div>
                     <div className="flex gap-3">
@@ -295,8 +295,8 @@ export default function GenerateWorkoutPage() {
                         2
                       </div>
                       <div>
-                        <p className="font-medium text-text-primary">AI Creates Your Plan</p>
-                        <p>Our AI analyzes your training profile and generates a complete workout</p>
+                        <p className="font-medium text-text-primary">AI creates your plan</p>
+                        <p>Analyzes your profile and generates exercises</p>
                       </div>
                     </div>
                     <div className="flex gap-3">
@@ -304,8 +304,8 @@ export default function GenerateWorkoutPage() {
                         3
                       </div>
                       <div>
-                        <p className="font-medium text-text-primary">Review & Save</p>
-                        <p>Preview your workout, make adjustments, and save it to your library</p>
+                        <p className="font-medium text-text-primary">Review & save</p>
+                        <p>Preview, adjust, save to library</p>
                       </div>
                     </div>
                   </CardContent>
@@ -351,7 +351,7 @@ export default function GenerateWorkoutPage() {
                       <div>
                         <CardTitle>Workout Generated!</CardTitle>
                         <CardDescription>
-                          Your personalized workout has been created and saved to your library
+                          Saved to your library
                         </CardDescription>
                       </div>
                     </div>

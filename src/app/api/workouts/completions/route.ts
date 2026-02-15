@@ -4,6 +4,36 @@ import { dynamoDBWorkoutCompletions } from "@/lib/dynamodb";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { z } from "zod";
 
+const metricSchema = z
+  .object({
+    cardId: z.string().min(1).max(200),
+    exerciseId: z.string().min(1).max(200),
+    exerciseName: z.string().min(1).max(200),
+    completed: z.boolean(),
+    isRun: z.boolean(),
+    targetReps: z.union([z.string().max(50), z.number()]).nullable().optional(),
+    targetWeight: z.string().max(100).nullable().optional(),
+    roundCompleted: z.number().int().min(0).max(1000).nullable().optional(),
+    roundTotal: z.number().int().min(0).max(1000).nullable().optional(),
+    reps: z.number().int().min(0).max(10000).nullable().optional(),
+    weight: z.number().min(0).max(5000).nullable().optional(),
+    weightUnit: z.enum(["lbs", "kg"]).nullable().optional(),
+    distance: z.number().min(0).max(100000).nullable().optional(),
+    distanceUnit: z.enum(["m", "km", "mi"]).nullable().optional(),
+    timeSeconds: z.number().int().min(0).max(172800).nullable().optional(),
+    notes: z.string().max(500).nullable().optional(),
+  })
+  .strip();
+
+const prHighlightSchema = z
+  .object({
+    exerciseName: z.string().min(1).max(200),
+    category: z.enum(["WEIGHT_REPS", "LONGEST_RUN_DISTANCE", "FASTEST_RUN"]),
+    message: z.string().min(1).max(300),
+    value: z.string().min(1).max(120),
+  })
+  .strip();
+
 const completionCreateSchema = z
   .object({
     workoutId: z.string().min(1).max(200),
@@ -11,7 +41,9 @@ const completionCreateSchema = z
     completedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     durationSeconds: z.number().int().min(0).max(86400).optional(),
     durationMinutes: z.number().int().min(0).max(1440).optional(),
-    notes: z.string().max(2000).optional(),
+    notes: z.string().max(2000).nullable().optional(),
+    exerciseMetrics: z.array(metricSchema).max(500).optional(),
+    prHighlights: z.array(prHighlightSchema).max(50).optional(),
   })
   .strip();
 
@@ -114,7 +146,16 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    const { workoutId, completedAt, completedDate, durationSeconds, durationMinutes, notes } = parsed.data;
+    const {
+      workoutId,
+      completedAt,
+      completedDate,
+      durationSeconds,
+      durationMinutes,
+      notes,
+      exerciseMetrics,
+      prHighlights,
+    } = parsed.data;
 
     // Generate completion ID (timestamp-based for sorting)
     const completionId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -128,6 +169,8 @@ export async function POST(req: NextRequest) {
       durationSeconds,
       durationMinutes,
       notes,
+      exerciseMetrics,
+      prHighlights,
     });
 
     return NextResponse.json({

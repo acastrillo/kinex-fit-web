@@ -38,7 +38,7 @@ export function useFeatureAccess(feature: LimitKey): FeatureGateResult {
 /**
  * Hook to check if user has quota remaining
  */
-export function useQuotaCheck(quotaType: 'ocrQuotaWeekly' | 'workoutsWeekly' | 'workoutsMax' | 'aiRequestsMonthly'): FeatureGateResult {
+export function useQuotaCheck(quotaType: 'workoutScansMonthly' | 'workoutsWeekly' | 'workoutsMax' | 'aiRequestsMonthly'): FeatureGateResult {
   const { user } = useAuthStore()
   const tier = normalizeSubscriptionTier(user?.subscriptionTier)
 
@@ -50,8 +50,8 @@ export function useQuotaCheck(quotaType: 'ocrQuotaWeekly' | 'workoutsWeekly' | '
   }
 
   // Check current usage
-  const currentUsage = quotaType === 'ocrQuotaWeekly'
-    ? user?.ocrQuotaUsed || 0
+  const currentUsage = quotaType === 'workoutScansMonthly'
+    ? (user?.scanQuotaUsed ?? ((user?.ocrQuotaUsed || 0) + (user?.instagramImportsUsed || 0)))
     : quotaType === 'aiRequestsMonthly'
     ? user?.aiRequestsUsed || 0
     : quotaType === 'workoutsWeekly'
@@ -62,7 +62,7 @@ export function useQuotaCheck(quotaType: 'ocrQuotaWeekly' | 'workoutsWeekly' | '
     return {
       allowed: false,
       reason: `You've reached your ${
-        quotaType === 'ocrQuotaWeekly' ? 'OCR' :
+        quotaType === 'workoutScansMonthly' ? 'scan' :
         quotaType === 'aiRequestsMonthly' ? 'AI request' :
         'workout'
       } limit. Upgrade to continue.`,

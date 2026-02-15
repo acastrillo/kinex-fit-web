@@ -7,6 +7,7 @@ import { ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { getDynamoDb } from '@/lib/dynamodb';
 import { writeAuditLog } from '@/lib/audit-log';
 import { getRequestIp } from '@/lib/request-ip';
+import { getQuotaLimit, normalizeSubscriptionTier } from '@/lib/subscription-tiers';
 
 export const runtime = 'nodejs';
 
@@ -265,6 +266,17 @@ async function scanUsersWithFilters(filters: ScanFilters): Promise<{
  * Removes sensitive fields and formats data
  */
 function sanitizeUserForAdmin(user: DynamoDBUser) {
+  const scanLimit = getQuotaLimit(
+    normalizeSubscriptionTier(user.subscriptionTier),
+    'workoutScansMonthly'
+  );
+  const scanUsed = user.scanQuotaUsed ?? ((user.ocrQuotaUsed || 0) + (user.instagramImportsUsed || 0));
+  const scanResetDate =
+    user.scanQuotaResetDate ||
+    user.ocrQuotaResetDate ||
+    user.lastInstagramImportReset ||
+    null;
+
   return {
     id: user.id,
     email: user.email,
@@ -286,9 +298,14 @@ function sanitizeUserForAdmin(user: DynamoDBUser) {
     disabledReason: user.disabledReason || null,
     hasStripeSubscription: Boolean(user.stripeSubscriptionId),
     quotas: {
+      scan: {
+        used: scanUsed,
+        limit: scanLimit,
+        resetDate: scanResetDate,
+      },
       ocr: {
         used: user.ocrQuotaUsed || 0,
-        limit: user.ocrQuotaLimit || 0,
+        limit: null,
         resetDate: user.ocrQuotaResetDate || null,
       },
       ai: {
@@ -298,7 +315,7 @@ function sanitizeUserForAdmin(user: DynamoDBUser) {
       },
       instagram: {
         used: user.instagramImportsUsed || 0,
-        limit: user.instagramImportsLimit || 0,
+        limit: null,
         resetDate: user.lastInstagramImportReset || null,
       },
     },

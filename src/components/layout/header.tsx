@@ -4,6 +4,7 @@ import { useState } from "react"
 import Link from "next/link"
 import { useAuthStore } from "@/store"
 import { Button } from "@/components/ui/button"
+import { getQuotaLimit, normalizeSubscriptionTier } from "@/lib/stripe"
 import {
   Dumbbell,
   Menu,
@@ -22,6 +23,10 @@ import {
 export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const { user, logout } = useAuthStore()
+  const scanLimit = user ? getQuotaLimit(normalizeSubscriptionTier(user.subscriptionTier), 'workoutScansMonthly') : null
+  const scanUsed = user
+    ? (user.scanQuotaUsed ?? ((user.ocrQuotaUsed || 0) + (user.instagramImportsUsed || 0)))
+    : 0
 
   const handleSignOut = async () => {
     // Call NextAuth signOut which will clear all cookies, session, and redirect to home
@@ -86,9 +91,9 @@ export function Header() {
               <span className="hidden sm:inline text-text-secondary">
                 {user?.firstName || user?.email}
               </span>
-              {user?.ocrQuotaLimit !== undefined && (
+              {scanLimit !== null && scanLimit !== undefined && (
                 <span className="text-text-secondary text-xs">
-                  ({user.ocrQuotaLimit - (user.ocrQuotaUsed || 0)} scans)
+                  ({Math.max(0, scanLimit - scanUsed)} scans)
                 </span>
               )}
             </Button>

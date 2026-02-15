@@ -20,9 +20,10 @@ interface User {
   isDisabled?: boolean;
   disabledReason?: string | null;
   quotas: {
-    ocr: { used: number; limit: number };
-    ai: { used: number; limit: number };
-    instagram: { used: number; limit: number };
+    scan: { used: number; limit: number | null; resetDate?: string | null };
+    ocr: { used: number; limit: number | null; resetDate?: string | null };
+    ai: { used: number; limit: number | null; resetDate?: string | null };
+    instagram: { used: number; limit: number | null; resetDate?: string | null };
   };
   costs: {
     currentMonth: number;

@@ -106,19 +106,14 @@ export async function POST(req: NextRequest) {
     const resetResults: Record<string, boolean> = {};
 
     try {
-      if (quotaType === 'ocr' || quotaType === 'all') {
-        await dynamoDBUsers.resetCounter(targetUserId, 'ocrQuotaUsed', 'ocrQuotaResetDate');
-        resetResults.ocr = true;
+      if (quotaType === 'ocr' || quotaType === 'instagram' || quotaType === 'all') {
+        await dynamoDBUsers.resetScanQuota(targetUserId);
+        resetResults.scans = true;
       }
 
       if (quotaType === 'ai' || quotaType === 'all') {
         await dynamoDBUsers.resetAIQuota(targetUserId);
         resetResults.ai = true;
-      }
-
-      if (quotaType === 'instagram' || quotaType === 'all') {
-        await dynamoDBUsers.resetInstagramQuota(targetUserId);
-        resetResults.instagram = true;
       }
     } catch (error) {
       console.error('[Admin] Error resetting quotas:', error);
@@ -151,15 +146,19 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    const quotaLabel = quotaType === 'ocr' || quotaType === 'instagram' ? 'scan' : quotaType;
+
     return NextResponse.json({
       success: true,
-      message: `Successfully reset ${quotaType === 'all' ? 'all quotas' : quotaType + ' quota'} for user ${targetUser!.email}`,
+      message: `Successfully reset ${quotaType === 'all' ? 'all quotas' : quotaLabel + ' quota'} for user ${targetUser!.email}`,
       reset: resetResults,
       user: {
         id: updatedUser?.id,
         email: updatedUser?.email,
         subscriptionTier: updatedUser?.subscriptionTier,
         quotas: {
+          scanUsed: updatedUser?.scanQuotaUsed || 0,
+          scanResetDate: updatedUser?.scanQuotaResetDate,
           ocrUsed: updatedUser?.ocrQuotaUsed || 0,
           ocrResetDate: updatedUser?.ocrQuotaResetDate,
           aiUsed: updatedUser?.aiRequestsUsed || 0,

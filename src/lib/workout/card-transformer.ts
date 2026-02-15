@@ -25,6 +25,7 @@ interface EditExercise {
   restSeconds?: number | null;
   notes?: string | null;
   distance?: string | null;
+  time?: string | null;
   timing?: string | null;
   setDetails?: Array<{
     id?: string | null;
@@ -88,6 +89,7 @@ export function expandWorkoutToCards(
             reps: detail?.reps ?? exercise.reps ?? "",
             weight: typeof resolvedWeight === "number" ? String(resolvedWeight) : resolvedWeight,
             distance: exercise.distance || null,
+            time: exercise.time || null,
             timing: exercise.timing || null,
             restSeconds: exercise.restSeconds || null,
             notes: exercise.notes || null,
@@ -111,6 +113,7 @@ export function expandWorkoutToCards(
           reps: exercise.reps ?? "",
           weight: exercise.weight || null,
           distance: exercise.distance || null,
+          time: exercise.time || null,
           timing: exercise.timing || null,
           restSeconds: exercise.restSeconds || null,
           notes: exercise.notes || null,
@@ -223,6 +226,7 @@ export function collapseCardsToExercises(cards: WorkoutCard[]): EditExercise[] {
       reps: summariseValues(cardGroup.map((card) => card.reps)) ?? "",
       weight: summariseValues(cardGroup.map((card) => card.weight)) || undefined,
       distance: firstCard.distance || undefined,
+      time: firstCard.time || undefined,
       timing: firstCard.timing || undefined,
       restSeconds: firstCard.restSeconds || undefined,
       notes: firstCard.notes || undefined,

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { useAuthStore } from "@/store"
 import { Login } from "@/components/auth/login"
@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
   Dialog,
@@ -18,19 +20,25 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { WorkoutTimer } from "@/components/timer/workout-timer"
-import AMRAPSessionView from "./amrap-session-view"
 import {
-  Timer,
-  Sparkles,
-  CheckCircle,
+  CheckCircle2,
   Clock,
-  Trophy,
   Loader2,
+  Pause,
+  Pencil,
+  Play,
+  Timer,
+  Trophy,
   X,
-  ChevronLeft,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { calculateOneRepMax, normalizeWeight } from "@/lib/pr-calculator"
+import type {
+  DistanceUnit,
+  WeightUnit,
+  WorkoutExerciseMetric,
+  WorkoutPRHighlight,
+} from "@/types/workout-completion"
 
 interface Exercise {
   id: string
@@ -58,7 +66,6 @@ interface WorkoutCard {
   weight?: string
   restSeconds?: number
   notes?: string
-  isLastSetOfExercise: boolean
 }
 
 interface Workout {
@@ -75,49 +82,88 @@ interface Workout {
   }>
   totalDuration: number
   difficulty: string
-  workoutType?: string
-  structure?: {
-    timeLimit?: number
-    rounds?: number
-    timePerRound?: number
-    totalTime?: number
-    pattern?: string
-  }
-  timerConfig?: {
-    params: any
-    aiGenerated?: boolean
-    reason?: string
-  }
 }
 
-// Helper function to flatten exercises into workout cards (circuit/round-based)
-// For workouts with multiple sets, this creates cards in round order:
-// Round 1: Exercise 1, Exercise 2, Exercise 3, Exercise 4
-// Round 2: Exercise 1, Exercise 2, Exercise 3, Exercise 4
-// etc.
+interface CompletionHistoryResponse {
+  completions?: Array<{
+    exerciseMetrics?: WorkoutExerciseMetric[] | null
+  }>
+}
+
+const RUN_EXERCISE_PATTERN = /\b(run|running|jog|jogging|sprint|mile|miles|km|kilometer|kilometre|5k|10k)\b/i
+
+function parseFirstNumber(input: string | number | undefined): number | null {
+  if (typeof input === "number") {
+    return Number.isFinite(input) ? input : null
+  }
+
+  if (typeof input !== "string") {
+    return null
+  }
+
+  const match = input.match(/\d+(\.\d+)?/)
+  if (!match) return null
+
+  const value = Number.parseFloat(match[0])
+  return Number.isFinite(value) ? value : null
+}
+
+function parseWeightUnit(weightText?: string): WeightUnit {
+  if (!weightText) return "lbs"
+  const normalized = weightText.toLowerCase()
+  if (normalized.includes("kg") || normalized.includes("kilo")) {
+    return "kg"
+  }
+  return "lbs"
+}
+
+function formatDuration(seconds: number): string {
+  const hrs = Math.floor(seconds / 3600)
+  const mins = Math.floor((seconds % 3600) / 60)
+  const secs = seconds % 60
+
+  if (hrs > 0) {
+    return `${hrs}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
+  }
+
+  return `${mins}:${secs.toString().padStart(2, "0")}`
+}
+
+function formatDistance(distance: number, unit: DistanceUnit = "m"): string {
+  if (unit === "m") return `${distance.toFixed(distance % 1 === 0 ? 0 : 1)} m`
+  if (unit === "km") return `${distance.toFixed(distance % 1 === 0 ? 0 : 2)} km`
+  return `${distance.toFixed(distance % 1 === 0 ? 0 : 2)} mi`
+}
+
+function toMeters(distance: number, unit: DistanceUnit = "m"): number {
+  if (unit === "km") return distance * 1000
+  if (unit === "mi") return distance * 1609.34
+  return distance
+}
+
+function normalizeExerciseName(name: string): string {
+  return name.trim().toLowerCase()
+}
+
 function flattenExercisesToCards(exercises: Exercise[]): WorkoutCard[] {
   const cards: WorkoutCard[] = []
 
   if (exercises.length === 0) return cards
 
-  // Find the maximum number of sets across all exercises
   const maxSets = Math.max(
     ...exercises.map(ex =>
       ex.setDetails && ex.setDetails.length > 0 ? ex.setDetails.length : ex.sets
     )
   )
 
-  // Build cards by round (set number) first, then by exercise
   for (let setIdx = 0; setIdx < maxSets; setIdx++) {
     exercises.forEach((exercise, exerciseIdx) => {
       const numSets = exercise.setDetails && exercise.setDetails.length > 0
         ? exercise.setDetails.length
         : exercise.sets
 
-      // Only add card if this exercise has this many sets
       if (setIdx < numSets) {
         const setDetail = exercise.setDetails?.[setIdx]
-        const isLastExerciseInRound = exerciseIdx === exercises.length - 1
 
         cards.push({
           id: `${exercise.id}-set-${setIdx + 1}`,
@@ -130,7 +176,6 @@ function flattenExercisesToCards(exercises: Exercise[]): WorkoutCard[] {
           weight: setDetail?.weight || exercise.weight,
           restSeconds: exercise.restSeconds,
           notes: exercise.notes,
-          isLastSetOfExercise: isLastExerciseInRound,
         })
       }
     })
@@ -139,327 +184,403 @@ function flattenExercisesToCards(exercises: Exercise[]): WorkoutCard[] {
   return cards
 }
 
-const isAmrapWorkout = (workout: Workout | null) => {
-  if (!workout) return false
-  if (workout.workoutType === 'amrap') return true
-  if (workout.workoutType && workout.workoutType !== 'standard') return false
-  const hasBlocks = (workout.amrapBlocks?.length ?? 0) > 0
-  return hasBlocks || Boolean(workout.structure?.timeLimit)
+function createInitialMetrics(cards: WorkoutCard[]): Record<string, WorkoutExerciseMetric> {
+  return cards.reduce<Record<string, WorkoutExerciseMetric>>((acc, card) => {
+    const parsedWeight = parseFirstNumber(card.weight)
+    const parsedReps = parseFirstNumber(card.reps)
+    const isRun = RUN_EXERCISE_PATTERN.test(`${card.exerciseName} ${card.notes || ""}`)
+
+    acc[card.id] = {
+      cardId: card.id,
+      exerciseId: card.exerciseId,
+      exerciseName: card.exerciseName,
+      completed: false,
+      isRun,
+      targetReps: card.reps,
+      targetWeight: card.weight || null,
+      roundCompleted: card.setNumber,
+      roundTotal: card.totalSets,
+      reps: !isRun && parsedReps !== null ? Math.round(parsedReps) : null,
+      weight: !isRun && parsedWeight !== null ? parsedWeight : null,
+      weightUnit: parseWeightUnit(card.weight),
+      distance: null,
+      distanceUnit: "m",
+      timeSeconds: null,
+      notes: null,
+    }
+
+    return acc
+  }, {})
+}
+
+function sanitizeMetric(metric: WorkoutExerciseMetric): WorkoutExerciseMetric {
+  return {
+    ...metric,
+    targetReps: metric.targetReps ?? null,
+    targetWeight: metric.targetWeight ?? null,
+    roundCompleted: metric.roundCompleted ?? null,
+    roundTotal: metric.roundTotal ?? null,
+    reps: metric.reps ?? null,
+    weight: metric.weight ?? null,
+    weightUnit: metric.weightUnit ?? "lbs",
+    distance: metric.distance ?? null,
+    distanceUnit: metric.distanceUnit ?? "m",
+    timeSeconds: metric.timeSeconds ?? null,
+    notes: metric.notes?.trim() || null,
+  }
+}
+
+function detectSessionPRs(
+  currentMetrics: WorkoutExerciseMetric[],
+  historyCompletions: CompletionHistoryResponse["completions"]
+): WorkoutPRHighlight[] {
+  const historicalMetrics = (historyCompletions || [])
+    .flatMap(completion => completion.exerciseMetrics || [])
+    .map(sanitizeMetric)
+
+  const prHighlights: WorkoutPRHighlight[] = []
+
+  for (const metric of currentMetrics) {
+    if (!metric.completed) continue
+
+    const exerciseKey = normalizeExerciseName(metric.exerciseName)
+    const exerciseHistory = historicalMetrics.filter(
+      item => normalizeExerciseName(item.exerciseName) === exerciseKey
+    )
+
+    if (!metric.isRun) {
+      if (!metric.weight || !metric.reps || metric.reps <= 0 || metric.weight <= 0) {
+        continue
+      }
+
+      const unit = metric.weightUnit || "lbs"
+      const candidateOneRM = calculateOneRepMax(
+        normalizeWeight(metric.weight, unit),
+        metric.reps
+      )
+
+      const previousBest = exerciseHistory.reduce((best, item) => {
+        if (!item.weight || !item.reps || item.reps <= 0 || item.weight <= 0) return best
+        const itemUnit = item.weightUnit || "lbs"
+        const oneRM = calculateOneRepMax(normalizeWeight(item.weight, itemUnit), item.reps)
+        return Math.max(best, oneRM)
+      }, 0)
+
+      if (candidateOneRM > previousBest + 0.5) {
+        prHighlights.push({
+          exerciseName: metric.exerciseName,
+          category: "WEIGHT_REPS",
+          message: `New strength PR on ${metric.exerciseName}!`,
+          value: `${Math.round(metric.weight)} ${unit} x ${metric.reps} (~${Math.round(candidateOneRM)} 1RM)`,
+        })
+      }
+
+      continue
+    }
+
+    if (metric.distance && metric.distance > 0) {
+      const distanceUnit = metric.distanceUnit || "m"
+      const candidateMeters = toMeters(metric.distance, distanceUnit)
+      const bestMeters = exerciseHistory.reduce((best, item) => {
+        if (!item.isRun || !item.distance || item.distance <= 0) return best
+        return Math.max(best, toMeters(item.distance, item.distanceUnit || "m"))
+      }, 0)
+
+      if (candidateMeters > bestMeters + 0.5) {
+        prHighlights.push({
+          exerciseName: metric.exerciseName,
+          category: "LONGEST_RUN_DISTANCE",
+          message: `Longest distance PR for ${metric.exerciseName}!`,
+          value: formatDistance(metric.distance, distanceUnit),
+        })
+      }
+
+      if (metric.timeSeconds && metric.timeSeconds > 0) {
+        const similarDistanceHistory = exerciseHistory.filter(item => {
+          if (!item.isRun || !item.distance || !item.timeSeconds) return false
+          const itemMeters = toMeters(item.distance, item.distanceUnit || "m")
+          return Math.abs(itemMeters - candidateMeters) <= 1
+        })
+
+        const bestTime = similarDistanceHistory.reduce((best, item) => {
+          return Math.min(best, item.timeSeconds || Number.MAX_SAFE_INTEGER)
+        }, Number.MAX_SAFE_INTEGER)
+
+        if (bestTime === Number.MAX_SAFE_INTEGER || metric.timeSeconds < bestTime) {
+          prHighlights.push({
+            exerciseName: metric.exerciseName,
+            category: "FASTEST_RUN",
+            message: `Fastest time PR for ${metric.exerciseName}!`,
+            value: `${formatDuration(metric.timeSeconds)} for ${formatDistance(metric.distance, distanceUnit)}`,
+          })
+        }
+      }
+    }
+  }
+
+  return prHighlights
 }
 
 export default function WorkoutSessionPage() {
   const { isAuthenticated, user } = useAuthStore()
   const router = useRouter()
   const params = useParams()
+
   const [workout, setWorkout] = useState<Workout | null>(null)
   const [workoutCards, setWorkoutCards] = useState<WorkoutCard[]>([])
+  const [exerciseMetrics, setExerciseMetrics] = useState<Record<string, WorkoutExerciseMetric>>({})
+
   const [loading, setLoading] = useState(true)
-  const [sessionStartTime, setSessionStartTime] = useState<number | null>(null)
   const [sessionDuration, setSessionDuration] = useState(0)
-  const [currentCardIndex, setCurrentCardIndex] = useState(0)
-  const [completedCards, setCompletedCards] = useState<Set<string>>(new Set())
-  const [showRestTimer, setShowRestTimer] = useState(false)
-  const [restTimeRemaining, setRestTimeRemaining] = useState(0)
+  const [isPaused, setIsPaused] = useState(false)
+
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
+  const [showMetricDialog, setShowMetricDialog] = useState(false)
+
   const [showCompletionDialog, setShowCompletionDialog] = useState(false)
   const [showEndDialog, setShowEndDialog] = useState(false)
   const [workoutNotes, setWorkoutNotes] = useState("")
-  const [showNotesInput, setShowNotesInput] = useState(false)
+
   const [isSaving, setIsSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [detectedPRs, setDetectedPRs] = useState<WorkoutPRHighlight[]>([])
+
   const sessionIntervalRef = useRef<NodeJS.Timeout | null>(null)
-  const restIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const isPausedRef = useRef(false)
+
+  useEffect(() => {
+    isPausedRef.current = isPaused
+  }, [isPaused])
 
   useEffect(() => {
     const workoutId = params?.id as string
-    if (workoutId && user?.id) {
-      loadWorkout(workoutId)
-      // Start session timer
-      const startTime = Date.now()
-      setSessionStartTime(startTime)
+    if (!workoutId || !user?.id) return
 
-      sessionIntervalRef.current = setInterval(() => {
-        setSessionDuration(Math.floor((Date.now() - startTime) / 1000))
-      }, 1000)
-    }
+    loadWorkout(workoutId)
+
+    if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current)
+
+    sessionIntervalRef.current = setInterval(() => {
+      if (!isPausedRef.current) {
+        setSessionDuration(prev => prev + 1)
+      }
+    }, 1000)
 
     return () => {
       if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current)
-      if (restIntervalRef.current) clearInterval(restIntervalRef.current)
     }
   }, [params?.id, user?.id])
 
-  // Reset save success state when dialog closes
   useEffect(() => {
     if (!showCompletionDialog) {
-      setSaveSuccess(false)
       setIsSaving(false)
+      setSaveSuccess(false)
     }
   }, [showCompletionDialog])
 
-  // Keyboard navigation
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't handle keyboard shortcuts if user is typing in an input/textarea
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return
-      }
-
-      // Escape key - close dialogs
-      if (e.key === 'Escape') {
-        if (showCompletionDialog && !saveSuccess) {
-          setShowCompletionDialog(false)
-        } else if (showEndDialog) {
-          setShowEndDialog(false)
-        }
-        return
-      }
-
-      // Don't handle navigation if dialog is open
-      if (showCompletionDialog || showEndDialog) {
-        return
-      }
-
-      // Arrow keys - navigate between cards
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault()
-        if (currentCardIndex > 0) {
-          setCurrentCardIndex(currentCardIndex - 1)
-        }
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault()
-        if (currentCardIndex < workoutCards.length - 1 && completedCards.has(workoutCards[currentCardIndex].id)) {
-          setCurrentCardIndex(currentCardIndex + 1)
-        }
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [currentCardIndex, workoutCards, completedCards, showCompletionDialog, showEndDialog, saveSuccess])
-
   const loadWorkout = async (workoutId: string) => {
     setLoading(true)
+
     try {
       const response = await fetch(`/api/workouts/${workoutId}`)
+
       if (response.ok) {
         const { workout: dbWorkout } = await response.json()
         const transformedWorkout: Workout = {
           id: dbWorkout.workoutId,
           title: dbWorkout.title,
-          description: dbWorkout.description || '',
+          description: dbWorkout.description || "",
           exercises: dbWorkout.exercises || [],
           amrapBlocks: dbWorkout.amrapBlocks || [],
           totalDuration: dbWorkout.totalDuration || 0,
-          difficulty: dbWorkout.difficulty || 'medium',
-          timerConfig: dbWorkout.timerConfig,
-          workoutType: dbWorkout.workoutType,
-          structure: dbWorkout.structure,
+          difficulty: dbWorkout.difficulty || "medium",
         }
+
+        const cards = flattenExercisesToCards(transformedWorkout.exercises)
         setWorkout(transformedWorkout)
-        setWorkoutCards(flattenExercisesToCards(transformedWorkout.exercises))
+        setWorkoutCards(cards)
+        setExerciseMetrics(createInitialMetrics(cards))
       } else {
-        const workouts = JSON.parse(localStorage.getItem('workouts') || '[]')
+        const workouts = JSON.parse(localStorage.getItem("workouts") || "[]")
         const found = workouts.find((w: Workout) => w.id === workoutId)
+
         if (found) {
+          const cards = flattenExercisesToCards(found.exercises)
           setWorkout(found)
-          setWorkoutCards(flattenExercisesToCards(found.exercises))
+          setWorkoutCards(cards)
+          setExerciseMetrics(createInitialMetrics(cards))
         } else {
           setWorkout(null)
           setWorkoutCards([])
+          setExerciseMetrics({})
         }
       }
     } catch (error) {
-      console.error('Error loading workout:', error)
-      const workouts = JSON.parse(localStorage.getItem('workouts') || '[]')
+      console.error("Error loading workout:", error)
+      const workouts = JSON.parse(localStorage.getItem("workouts") || "[]")
       const found = workouts.find((w: Workout) => w.id === workoutId)
+
       if (found) {
+        const cards = flattenExercisesToCards(found.exercises)
         setWorkout(found)
-        setWorkoutCards(flattenExercisesToCards(found.exercises))
+        setWorkoutCards(cards)
+        setExerciseMetrics(createInitialMetrics(cards))
       } else {
         setWorkout(null)
         setWorkoutCards([])
+        setExerciseMetrics({})
       }
     } finally {
       setLoading(false)
     }
   }
 
-  const handleCompleteCard = () => {
-    if (workoutCards.length === 0) return
+  const completedCount = useMemo(
+    () => Object.values(exerciseMetrics).filter(metric => metric.completed).length,
+    [exerciseMetrics]
+  )
 
-    const currentCard = workoutCards[currentCardIndex]
-    const newCompleted = new Set(completedCards)
-    newCompleted.add(currentCard.id)
-    setCompletedCards(newCompleted)
+  const progress = workoutCards.length > 0 ? (completedCount / workoutCards.length) * 100 : 0
 
-    // Check if this was the last card
-    if (currentCardIndex === workoutCards.length - 1) {
-      // Show completion dialog
-      if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current)
-      setShowNotesInput(false) // Reset notes input visibility
-      setWorkoutNotes("") // Clear previous notes
-      setShowCompletionDialog(true)
-      return
-    }
+  const selectedCard = useMemo(
+    () => workoutCards.find(card => card.id === selectedCardId) || null,
+    [selectedCardId, workoutCards]
+  )
 
-    // Show rest timer if card has rest configured and it's the last set of the exercise
-    if (currentCard.isLastSetOfExercise && currentCard.restSeconds && currentCard.restSeconds > 0) {
-      startRestTimer(currentCard.restSeconds)
-    } else {
-      // Move to next card immediately
-      setCurrentCardIndex(prev => prev + 1)
-    }
+  const selectedMetric = selectedCard ? exerciseMetrics[selectedCard.id] : null
+
+  const updateMetric = (cardId: string, updates: Partial<WorkoutExerciseMetric>) => {
+    setExerciseMetrics(prev => ({
+      ...prev,
+      [cardId]: {
+        ...prev[cardId],
+        ...updates,
+      },
+    }))
   }
 
-  const startRestTimer = (seconds: number) => {
-    setRestTimeRemaining(seconds)
-    setShowRestTimer(true)
-
-    restIntervalRef.current = setInterval(() => {
-      setRestTimeRemaining(prev => {
-        if (prev <= 1) {
-          // Timer finished, auto-advance
-          if (restIntervalRef.current) clearInterval(restIntervalRef.current)
-          setShowRestTimer(false)
-          setCurrentCardIndex(prevIndex => prevIndex + 1)
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
+  const openMetricDialog = (cardId: string) => {
+    setSelectedCardId(cardId)
+    setShowMetricDialog(true)
   }
 
-  const skipRest = () => {
-    if (restIntervalRef.current) clearInterval(restIntervalRef.current)
-    setShowRestTimer(false)
-    setRestTimeRemaining(0)
-    setCurrentCardIndex(prev => prev + 1)
+  const toggleComplete = (cardId: string) => {
+    const metric = exerciseMetrics[cardId]
+    if (!metric) return
+    updateMetric(cardId, { completed: !metric.completed })
   }
 
-  const handleMarkCompleted = async (notes?: string) => {
-    if (!workout || sessionStartTime === null) return
+  const handleDiscardWorkout = () => {
+    if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current)
+    router.push("/calendar")
+  }
+
+  const handleMarkCompleted = async () => {
+    if (!workout) return
 
     setIsSaving(true)
 
     try {
       const completedAt = new Date().toISOString()
-      const todayIso = completedAt.split('T')[0]
+      const completedDate = completedAt.split("T")[0]
       const durationMinutes = Math.floor(sessionDuration / 60)
+      const safeNotes = workoutNotes.trim().length > 0 ? workoutNotes.trim() : null
 
-      // Normalize notes to avoid accidental event objects being stringified
-      const rawNotes = typeof notes === 'string' ? notes : workoutNotes
-      const normalizedNotes = typeof rawNotes === 'string' ? rawNotes.trim() : ''
-      const safeNotes = normalizedNotes.length > 0 ? normalizedNotes : null
+      const metricsToSave = workoutCards
+        .map(card => exerciseMetrics[card.id])
+        .filter((metric): metric is WorkoutExerciseMetric => Boolean(metric))
+        .map(sanitizeMetric)
 
-      // Save to localStorage
-      let existing: any[] = []
+      let previousCompletions: CompletionHistoryResponse["completions"] = []
       try {
-        existing = JSON.parse(localStorage.getItem('completedWorkouts') || '[]')
-      } catch {
-        existing = []
+        const historyResponse = await fetch("/api/workouts/completions?limit=200")
+        if (historyResponse.ok) {
+          const historyData: CompletionHistoryResponse = await historyResponse.json()
+          previousCompletions = historyData.completions || []
+        }
+      } catch (historyError) {
+        console.error("Unable to load completion history for PR detection:", historyError)
       }
-      const newEntry = {
+
+      const prHighlights = detectSessionPRs(metricsToSave, previousCompletions)
+      setDetectedPRs(prHighlights)
+
+      const localCompletionEntry = {
         id: Date.now().toString(),
         workoutId: workout.id,
         completedAt,
-        completedDate: todayIso,
+        completedDate,
         durationSeconds: sessionDuration,
         durationMinutes,
         notes: safeNotes,
+        exerciseMetrics: metricsToSave,
+        prHighlights,
       }
-      const updated = [...existing, newEntry]
-      localStorage.setItem('completedWorkouts', JSON.stringify(updated))
 
-      // Save to DynamoDB
+      let existingCompletions: any[] = []
+      try {
+        existingCompletions = JSON.parse(localStorage.getItem("completedWorkouts") || "[]")
+      } catch {
+        existingCompletions = []
+      }
+
+      localStorage.setItem(
+        "completedWorkouts",
+        JSON.stringify([...existingCompletions, localCompletionEntry])
+      )
+
       if (user?.id) {
-        try {
-          const completionResponse = await fetch('/api/workouts/completions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              workoutId: workout.id,
-              completedAt,
-              completedDate: todayIso,
-              durationSeconds: sessionDuration,
-              durationMinutes,
-              notes: safeNotes,
-            }),
-          })
+        const completionResponse = await fetch("/api/workouts/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workoutId: workout.id,
+            completedAt,
+            completedDate,
+            durationSeconds: sessionDuration,
+            durationMinutes,
+            notes: safeNotes || undefined,
+            exerciseMetrics: metricsToSave,
+            prHighlights,
+          }),
+        })
 
-          if (!completionResponse.ok) {
-            const errorData = await completionResponse.json().catch(() => ({}))
-            throw new Error(errorData.error || 'Failed to save workout completion')
-          }
+        if (!completionResponse.ok) {
+          const errorData = await completionResponse.json().catch(() => ({}))
+          throw new Error(errorData.error || "Failed to save workout completion")
+        }
 
-          const completeResponse = await fetch(`/api/workouts/${workout.id}/complete`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              completedAt,
-              completedDate: todayIso,
-              durationSeconds: sessionDuration,
-            }),
-          })
+        const completeResponse = await fetch(`/api/workouts/${workout.id}/complete`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            completedAt,
+            completedDate,
+            durationSeconds: sessionDuration,
+          }),
+        })
 
-          if (!completeResponse.ok) {
-            const errorData = await completeResponse.json().catch(() => ({}))
-            throw new Error(errorData.error || 'Failed to mark workout as complete')
-          }
-        } catch (error) {
-          console.error('Error saving completion:', error)
-          throw error // Re-throw to be caught by outer catch block
+        if (!completeResponse.ok) {
+          const errorData = await completeResponse.json().catch(() => ({}))
+          throw new Error(errorData.error || "Failed to mark workout as complete")
         }
       }
 
-      window.dispatchEvent(new Event('workoutsUpdated'))
-      window.dispatchEvent(new Event('calendarUpdated'))
+      window.dispatchEvent(new Event("workoutsUpdated"))
+      window.dispatchEvent(new Event("calendarUpdated"))
 
-      // Show success state
       setSaveSuccess(true)
       setIsSaving(false)
 
-      // Wait 1.5 seconds to show success celebration, then navigate to calendar
       setTimeout(() => {
-        router.push('/calendar')
-      }, 1500)
-
+        router.push("/calendar")
+      }, 1800)
     } catch (error) {
-      console.error('Error saving workout:', error)
+      console.error("Error saving workout:", error)
       setIsSaving(false)
-      const errorMessage = error instanceof Error ? error.message : 'Failed to save workout. Please try again.'
+      const errorMessage = error instanceof Error ? error.message : "Failed to save workout."
       alert(errorMessage)
     }
-  }
-
-  const handleEndWorkout = () => {
-    // For AMRAP workouts, navigate directly to calendar
-    if (isAmrapWorkout(workout)) {
-      if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current)
-      router.push('/calendar')
-      return
-    }
-    // For other workouts, show end dialog
-    setShowEndDialog(true)
-  }
-
-  const handleDiscardWorkout = () => {
-    if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current)
-    if (restIntervalRef.current) clearInterval(restIntervalRef.current)
-    router.push('/calendar')
-  }
-
-  const formatTime = (seconds: number) => {
-    const hrs = Math.floor(seconds / 3600)
-    const mins = Math.floor((seconds % 3600) / 60)
-    const secs = seconds % 60
-    if (hrs > 0) {
-      return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
-    }
-    return `${mins}:${secs.toString().padStart(2, '0')}`
-  }
-
-  const navigateToCard = (index: number) => {
-    setCurrentCardIndex(index)
   }
 
   if (!isAuthenticated) {
@@ -487,314 +608,392 @@ export default function WorkoutSessionPage() {
         <main className="min-h-screen flex items-center justify-center">
           <div className="text-center">
             <p className="text-text-secondary mb-4">Workout not found</p>
-            <Button onClick={() => router.push('/')}>Go Home</Button>
+            <Button onClick={() => router.push("/")}>Go Home</Button>
           </div>
         </main>
       </>
     )
   }
 
-  const currentCard = workoutCards[currentCardIndex]
-  const progress = workoutCards.length > 0 ? ((completedCards.size) / workoutCards.length) * 100 : 0
-
-  // Check if this is an AMRAP workout
-  const isAMRAP = isAmrapWorkout(workout)
-
-  // Extract time limit for AMRAP
-  const amrapTimeLimit =
-    workout.structure?.timeLimit ||
-    (workout.timerConfig?.params?.durationSeconds) ||
-    720 // Default 12 minutes
-
   return (
     <>
       <Header />
-      <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 pb-32">
-        {/* Top Bar */}
+      <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 pb-28">
         <div className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-sm border-b border-slate-800 px-4 py-3">
-          <div className="max-w-4xl mx-auto">
-            <div className="flex items-center justify-between mb-2">
+          <div className="max-w-4xl mx-auto space-y-3">
+            <div className="flex items-center justify-between gap-3">
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={handleEndWorkout}
+                onClick={() => setShowEndDialog(true)}
                 className="text-text-secondary hover:text-white"
               >
                 <X className="h-5 w-5 mr-2" />
-                End
+                End Workout
               </Button>
-              {!isAMRAP && (
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2 text-text-secondary">
-                    <Clock className="h-4 w-4" />
-                    <span className="text-sm font-mono tabular-nums">{formatTime(sessionDuration)}</span>
-                  </div>
-                  <span className="text-sm text-text-secondary">
-                    {completedCards.size}/{workoutCards.length} exercises
-                  </span>
-                </div>
-              )}
-              {isAMRAP && (
-                <div className="flex items-center gap-2 text-text-secondary">
+
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 text-white">
                   <Clock className="h-4 w-4" />
-                  <span className="text-sm font-mono tabular-nums">{formatTime(sessionDuration)}</span>
-                </div>
-              )}
-            </div>
-            {!isAMRAP && <Progress value={progress} className="h-1" />}
-          </div>
-        </div>
-
-        {/* AMRAP Session View */}
-        {isAMRAP ? (
-          <AMRAPSessionView
-            workout={workout}
-            exercises={workout.exercises}
-            timeLimit={amrapTimeLimit}
-            onComplete={(notes) => {
-              handleMarkCompleted(notes)
-            }}
-            onEnd={handleEndWorkout}
-          />
-        ) : (
-          /* Card Carousel */
-          <>
-        <div className="max-w-4xl mx-auto px-4 py-8">
-          <div className="relative">
-            {/* Previous Card (smaller, faded) */}
-            {currentCardIndex > 0 && (
-              <div
-                className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-full w-64 opacity-30 scale-75 transition-all cursor-pointer hover:opacity-50"
-                onClick={() => navigateToCard(currentCardIndex - 1)}
-              >
-                <WorkoutSetCard
-                  card={workoutCards[currentCardIndex - 1]}
-                  isCompleted={completedCards.has(workoutCards[currentCardIndex - 1].id)}
-                  isActive={false}
-                  onComplete={() => {}}
-                />
-              </div>
-            )}
-
-            {/* Current Card (large, centered) */}
-            <div className="mx-auto max-w-md">
-              <WorkoutSetCard
-                card={currentCard}
-                isCompleted={completedCards.has(currentCard.id)}
-                isActive={true}
-                onComplete={handleCompleteCard}
-              />
-            </div>
-
-            {/* Next Card (smaller, faded) - Preview only, not clickable */}
-            {currentCardIndex < workoutCards.length - 1 && (
-              <div
-                className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-full w-64 opacity-30 scale-75 transition-all pointer-events-none"
-              >
-                <WorkoutSetCard
-                  card={workoutCards[currentCardIndex + 1]}
-                  isCompleted={completedCards.has(workoutCards[currentCardIndex + 1].id)}
-                  isActive={false}
-                  onComplete={() => {}}
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Navigation Hints - Only allow backward navigation */}
-          <div className="flex flex-col items-center gap-2 mt-8">
-            <div className="flex items-center justify-center gap-8">
-              {currentCardIndex > 0 && (
-                <Button
-                  variant="ghost"
-                  onClick={() => navigateToCard(currentCardIndex - 1)}
-                  className="text-text-secondary"
-                >
-                  <ChevronLeft className="h-5 w-5 mr-2" />
-                  Review Previous
-                </Button>
-              )}
-            </div>
-            <div className="text-xs text-text-secondary/60 text-center">
-              Use ← → arrow keys to navigate • Esc to close dialogs
-            </div>
-          </div>
-        </div>
-
-        {/* Rest Timer Overlay */}
-        {showRestTimer && (
-          <div className="fixed inset-0 z-40 bg-black/80 backdrop-blur-sm flex items-center justify-center">
-            <Card className="w-80 bg-slate-800 border-slate-700">
-              <CardContent className="pt-8 pb-6 text-center">
-                <div className="mb-4">
-                  <Timer className="h-16 w-16 text-primary mx-auto mb-4" />
-                  <h3 className="text-2xl font-bold text-white mb-2">Rest Time</h3>
-                  <p className="text-text-secondary text-sm">Take a breather before the next exercise</p>
-                </div>
-                <div className="text-6xl font-bold text-primary tabular-nums mb-6">
-                  {formatTime(restTimeRemaining)}
+                  <span className="font-mono tabular-nums">{formatDuration(sessionDuration)}</span>
                 </div>
                 <Button
-                  onClick={skipRest}
                   variant="outline"
-                  className="w-full"
+                  size="sm"
+                  onClick={() => setIsPaused(prev => !prev)}
+                  className="min-w-[110px]"
                 >
-                  Skip Rest
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {/* Workout Timer Bottom Bar - Only for non-AMRAP workouts */}
-        {!isAMRAP && workout.timerConfig && (
-          <div className="fixed bottom-0 left-0 right-0 z-20 bg-slate-900/95 backdrop-blur-sm border-t border-slate-800">
-            <div className="max-w-4xl mx-auto px-4 py-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Timer className="h-4 w-4 text-primary" />
-                  <span className="text-sm font-medium text-white">
-                    Workout Timer
-                  </span>
-                  {workout.timerConfig.aiGenerated && (
-                    <Badge variant="secondary" className="text-xs">
-                      <Sparkles className="h-3 w-3 mr-1" />
-                      AI
-                    </Badge>
-                  )}
-                </div>
-                <WorkoutTimer
-                  params={workout.timerConfig.params}
-                  persistKey={`workout-${workout.id}-session-timer`}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-          </>
-        )}
-      </main>
-
-      {/* Completion Dialog */}
-      <Dialog
-        open={showCompletionDialog}
-        onOpenChange={(open) => {
-          // Prevent closing during save
-          if (!isSaving && !saveSuccess) {
-            setShowCompletionDialog(open)
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          {saveSuccess ? (
-            // Success State
-            <>
-              <DialogHeader>
-                <div className="flex items-center justify-center mb-6">
-                  <div className="relative">
-                    <div className="absolute inset-0 bg-green-500/20 rounded-full animate-ping" />
-                    <div className="relative bg-green-500 rounded-full p-6">
-                      <CheckCircle className="h-16 w-16 text-white" />
-                    </div>
-                  </div>
-                </div>
-                <DialogTitle className="text-center text-3xl font-bold">
-                  Saved! 🎉
-                </DialogTitle>
-                <DialogDescription className="text-center text-lg mt-2">
-                  Your workout has been saved successfully
-                </DialogDescription>
-              </DialogHeader>
-              <div className="py-4 text-center text-text-secondary">
-                Taking you to your calendar...
-              </div>
-            </>
-          ) : (
-            // Normal/Saving State
-            <>
-              <DialogHeader>
-                <div className="flex items-center justify-center mb-4">
-                  <div className="bg-green-100 rounded-full p-4 animate-bounce">
-                    <Trophy className="h-12 w-12 text-green-600" />
-                  </div>
-                </div>
-                <DialogTitle className="text-center text-2xl">
-                  Workout Complete! 🎉
-                </DialogTitle>
-                <DialogDescription className="text-center text-lg">
-                  Amazing work! You crushed it in{' '}
-                  <span className="font-bold text-primary">{formatTime(sessionDuration)}</span>
-                </DialogDescription>
-              </DialogHeader>
-              <div className="my-4 space-y-3">
-                <div className="flex items-center justify-between p-3 bg-surface rounded-lg">
-                  <span className="text-text-secondary">Workout:</span>
-                  <span className="font-medium">{workout.title}</span>
-                </div>
-                <div className="flex items-center justify-between p-3 bg-surface rounded-lg">
-                  <span className="text-text-secondary">Exercises:</span>
-                  <span className="font-medium">{completedCards.size} completed</span>
-                </div>
-                <div className="flex items-center justify-between p-3 bg-surface rounded-lg">
-                  <span className="text-text-secondary">Duration:</span>
-                  <span className="font-medium">{Math.floor(sessionDuration / 60)} min</span>
-                </div>
-
-                {/* Optional Notes Section */}
-                {!showNotesInput ? (
-                  <Button
-                    variant="ghost"
-                    onClick={() => setShowNotesInput(true)}
-                    className="w-full text-text-secondary hover:text-primary"
-                    disabled={isSaving}
-                  >
-                    <Sparkles className="h-4 w-4 mr-2" />
-                    Add Notes (Optional)
-                  </Button>
-                ) : (
-                  <div className="space-y-2">
-                    <label htmlFor="workout-notes" className="text-sm font-medium text-text-secondary">
-                      Workout Notes
-                    </label>
-                    <Textarea
-                      id="workout-notes"
-                      placeholder="How did it feel? Any PRs or observations..."
-                      value={workoutNotes}
-                      onChange={(e) => setWorkoutNotes(e.target.value)}
-                      className="min-h-[100px] resize-none"
-                      autoFocus
-                      disabled={isSaving}
-                    />
-                  </div>
-                )}
-              </div>
-              <DialogFooter className="flex-col sm:flex-row gap-2">
-                <Button
-                  onClick={() => handleMarkCompleted()}
-                  className="w-full bg-green-600 hover:bg-green-700"
-                  size="lg"
-                  disabled={isSaving}
-                >
-                  {isSaving ? (
+                  {isPaused ? (
                     <>
-                      <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                      Saving...
+                      <Play className="h-4 w-4 mr-2" />
+                      Resume
                     </>
                   ) : (
                     <>
-                      <CheckCircle className="h-5 w-5 mr-2" />
-                      Save Workout
+                      <Pause className="h-4 w-4 mr-2" />
+                      Pause
                     </>
                   )}
                 </Button>
-                <Button
-                  variant="ghost"
-                  onClick={handleDiscardWorkout}
-                  className="w-full sm:w-auto text-text-secondary"
-                  size="sm"
-                  disabled={isSaving}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-text-secondary">
+              <span>{completedCount}/{workoutCards.length} moves completed</span>
+              {isPaused && <span className="text-amber-400">Timer paused</span>}
+            </div>
+
+            <Progress value={progress} className="h-1.5" />
+          </div>
+        </div>
+
+        <div className="max-w-4xl mx-auto px-4 py-6">
+          <div className="mb-5">
+            <h1 className="text-2xl font-bold text-white">{workout.title}</h1>
+            {workout.description && (
+              <p className="text-text-secondary mt-1">{workout.description}</p>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            {workoutCards.map((card) => {
+              const metric = exerciseMetrics[card.id]
+
+              if (!metric) return null
+
+              const hasLoggedMetrics = metric.isRun
+                ? Boolean((metric.distance && metric.distance > 0) || (metric.timeSeconds && metric.timeSeconds > 0))
+                : Boolean((metric.reps && metric.reps > 0) || (metric.weight && metric.weight > 0))
+
+              return (
+                <Card
+                  key={card.id}
+                  onClick={() => openMetricDialog(card.id)}
+                  className={cn(
+                    "cursor-pointer transition-all border",
+                    metric.completed
+                      ? "border-green-500/50 bg-green-500/5"
+                      : "border-slate-700 bg-slate-900/60 hover:border-primary/60"
+                  )}
                 >
-                  Discard
+                  <CardContent className="pt-4 pb-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-2 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/15 text-primary text-sm font-semibold">
+                            {card.exerciseNumber}
+                          </div>
+                          <h2 className="text-lg font-semibold text-white capitalize truncate">
+                            {card.exerciseName}
+                          </h2>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <Badge variant="secondary" className="bg-slate-800 text-slate-200 border-slate-700">
+                            Round {metric.roundCompleted ?? card.setNumber} of {metric.roundTotal ?? card.totalSets}
+                          </Badge>
+                          {metric.isRun ? (
+                            <Badge variant="outline" className="border-blue-500/50 text-blue-300">
+                              Run
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="border-slate-600 text-slate-300">
+                              Target: {card.reps || "-"} reps {card.weight ? `@ ${card.weight}` : ""}
+                            </Badge>
+                          )}
+                        </div>
+
+                        <div className="text-sm text-text-secondary">
+                          {metric.isRun ? (
+                            <>
+                              {metric.distance && metric.distance > 0 ? (
+                                <span>{formatDistance(metric.distance, metric.distanceUnit || "m")}</span>
+                              ) : (
+                                <span>No distance logged yet</span>
+                              )}
+                              {metric.timeSeconds && metric.timeSeconds > 0 && (
+                                <span> · {formatDuration(metric.timeSeconds)}</span>
+                              )}
+                            </>
+                          ) : hasLoggedMetrics ? (
+                            <>
+                              {metric.reps && metric.reps > 0 ? `${metric.reps} reps` : "No reps logged"}
+                              {metric.weight && metric.weight > 0
+                                ? ` @ ${metric.weight} ${metric.weightUnit || "lbs"}`
+                                : ""}
+                            </>
+                          ) : (
+                            <span>No metrics logged yet</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-2">
+                        <Button
+                          variant={metric.completed ? "secondary" : "outline"}
+                          size="sm"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            toggleComplete(card.id)
+                          }}
+                          className={cn(
+                            "min-w-[120px]",
+                            metric.completed && "bg-green-500/20 text-green-200 border-green-500/40 hover:bg-green-500/30"
+                          )}
+                        >
+                          <CheckCircle2 className="h-4 w-4 mr-2" />
+                          {metric.completed ? "Completed" : "Mark Complete"}
+                        </Button>
+
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            openMetricDialog(card.id)
+                          }}
+                          className="text-text-secondary hover:text-white"
+                        >
+                          <Pencil className="h-4 w-4 mr-2" />
+                          Log Metrics
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+
+          <div className="mt-8">
+            <Button
+              className="w-full h-12 text-base"
+              onClick={() => setShowCompletionDialog(true)}
+              disabled={isSaving}
+            >
+              <Timer className="h-5 w-5 mr-2" />
+              Finish & Save Workout
+            </Button>
+          </div>
+        </div>
+      </main>
+
+      <Dialog open={showMetricDialog} onOpenChange={setShowMetricDialog}>
+        <DialogContent className="sm:max-w-lg">
+          {selectedCard && selectedMetric && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-xl capitalize">{selectedCard.exerciseName}</DialogTitle>
+                <DialogDescription>
+                  Log your completed metrics for this move.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 py-2">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="round-completed">Rounds</Label>
+                    <Input
+                      id="round-completed"
+                      type="number"
+                      min={0}
+                      value={selectedMetric.roundCompleted ?? ""}
+                      onChange={(event) => {
+                        const value = event.target.value
+                        updateMetric(selectedCard.id, {
+                          roundCompleted: value === "" ? null : Math.max(0, Number.parseInt(value, 10) || 0),
+                        })
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="round-total">of</Label>
+                    <Input
+                      id="round-total"
+                      type="number"
+                      min={0}
+                      value={selectedMetric.roundTotal ?? ""}
+                      onChange={(event) => {
+                        const value = event.target.value
+                        updateMetric(selectedCard.id, {
+                          roundTotal: value === "" ? null : Math.max(0, Number.parseInt(value, 10) || 0),
+                        })
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {!selectedMetric.isRun ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label htmlFor="metric-reps">Reps</Label>
+                      <Input
+                        id="metric-reps"
+                        type="number"
+                        min={0}
+                        value={selectedMetric.reps ?? ""}
+                        onChange={(event) => {
+                          const value = event.target.value
+                          updateMetric(selectedCard.id, {
+                            reps: value === "" ? null : Math.max(0, Number.parseInt(value, 10) || 0),
+                          })
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="metric-weight">Weight</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="metric-weight"
+                          type="number"
+                          min={0}
+                          step="0.5"
+                          value={selectedMetric.weight ?? ""}
+                          onChange={(event) => {
+                            const value = event.target.value
+                            updateMetric(selectedCard.id, {
+                              weight: value === "" ? null : Math.max(0, Number.parseFloat(value) || 0),
+                            })
+                          }}
+                        />
+                        <select
+                          className="h-10 rounded-md border border-input bg-background px-2 text-sm"
+                          value={selectedMetric.weightUnit || "lbs"}
+                          onChange={(event) => {
+                            updateMetric(selectedCard.id, {
+                              weightUnit: event.target.value as WeightUnit,
+                            })
+                          }}
+                        >
+                          <option value="lbs">lbs</option>
+                          <option value="kg">kg</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-[1fr_auto] gap-2">
+                      <div>
+                        <Label htmlFor="run-distance">Distance</Label>
+                        <Input
+                          id="run-distance"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={selectedMetric.distance ?? ""}
+                          onChange={(event) => {
+                            const value = event.target.value
+                            updateMetric(selectedCard.id, {
+                              distance: value === "" ? null : Math.max(0, Number.parseFloat(value) || 0),
+                            })
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="run-distance-unit">Unit</Label>
+                        <select
+                          id="run-distance-unit"
+                          className="h-10 rounded-md border border-input bg-background px-2 text-sm"
+                          value={selectedMetric.distanceUnit || "m"}
+                          onChange={(event) => {
+                            updateMetric(selectedCard.id, {
+                              distanceUnit: event.target.value as DistanceUnit,
+                            })
+                          }}
+                        >
+                          <option value="m">m</option>
+                          <option value="km">km</option>
+                          <option value="mi">mi</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label htmlFor="run-minutes">Time (min)</Label>
+                        <Input
+                          id="run-minutes"
+                          type="number"
+                          min={0}
+                          value={Math.floor((selectedMetric.timeSeconds || 0) / 60)}
+                          onChange={(event) => {
+                            const minutes = Math.max(0, Number.parseInt(event.target.value || "0", 10) || 0)
+                            const seconds = (selectedMetric.timeSeconds || 0) % 60
+                            updateMetric(selectedCard.id, {
+                              timeSeconds: (minutes * 60) + seconds,
+                            })
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="run-seconds">Time (sec)</Label>
+                        <Input
+                          id="run-seconds"
+                          type="number"
+                          min={0}
+                          max={59}
+                          value={(selectedMetric.timeSeconds || 0) % 60}
+                          onChange={(event) => {
+                            const seconds = Math.max(0, Math.min(59, Number.parseInt(event.target.value || "0", 10) || 0))
+                            const minutes = Math.floor((selectedMetric.timeSeconds || 0) / 60)
+                            updateMetric(selectedCard.id, {
+                              timeSeconds: (minutes * 60) + seconds,
+                            })
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <Label htmlFor="metric-notes">Notes</Label>
+                  <Textarea
+                    id="metric-notes"
+                    value={selectedMetric.notes || ""}
+                    onChange={(event) => updateMetric(selectedCard.id, { notes: event.target.value })}
+                    placeholder="Optional notes"
+                    className="min-h-[80px]"
+                  />
+                </div>
+              </div>
+
+              <DialogFooter className="flex-col sm:flex-row gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => toggleComplete(selectedCard.id)}
+                  className="w-full sm:w-auto"
+                >
+                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                  {selectedMetric.completed ? "Mark Incomplete" : "Mark Complete"}
+                </Button>
+                <Button
+                  onClick={() => setShowMetricDialog(false)}
+                  className="w-full sm:w-auto"
+                >
+                  Save
                 </Button>
               </DialogFooter>
             </>
@@ -802,28 +1001,128 @@ export default function WorkoutSessionPage() {
         </DialogContent>
       </Dialog>
 
-      {/* End Workout Dialog */}
+      <Dialog
+        open={showCompletionDialog}
+        onOpenChange={(open) => {
+          if (!isSaving && !saveSuccess) {
+            setShowCompletionDialog(open)
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-xl">
+          {saveSuccess ? (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-center text-3xl">Great job! 🎉</DialogTitle>
+                <DialogDescription className="text-center text-base">
+                  Workout saved in {formatDuration(sessionDuration)}.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-3 py-2">
+                {detectedPRs.length > 0 ? (
+                  <>
+                    <div className="flex items-center justify-center gap-2 text-amber-300">
+                      <Trophy className="h-5 w-5" />
+                      <span className="font-semibold">{detectedPRs.length} new PR{detectedPRs.length === 1 ? "" : "s"}!</span>
+                    </div>
+                    <div className="space-y-2">
+                      {detectedPRs.map((pr, index) => (
+                        <div
+                          key={`${pr.exerciseName}-${pr.category}-${index}`}
+                          className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2"
+                        >
+                          <div className="text-sm font-medium text-amber-200">{pr.message}</div>
+                          <div className="text-xs text-amber-100/90">{pr.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center text-text-secondary">Great effort. Keep stacking sessions.</div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-2xl">Finish Workout</DialogTitle>
+                <DialogDescription>
+                  Save this session and all logged move metrics.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-3 my-3">
+                <div className="flex items-center justify-between rounded-lg bg-surface px-3 py-2 text-sm">
+                  <span className="text-text-secondary">Workout</span>
+                  <span className="font-medium">{workout.title}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg bg-surface px-3 py-2 text-sm">
+                  <span className="text-text-secondary">Completed moves</span>
+                  <span className="font-medium">{completedCount} / {workoutCards.length}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg bg-surface px-3 py-2 text-sm">
+                  <span className="text-text-secondary">Duration</span>
+                  <span className="font-medium">{formatDuration(sessionDuration)}</span>
+                </div>
+
+                <div>
+                  <Label htmlFor="workout-notes">Session Notes</Label>
+                  <Textarea
+                    id="workout-notes"
+                    placeholder="How did it go?"
+                    value={workoutNotes}
+                    onChange={(event) => setWorkoutNotes(event.target.value)}
+                    className="min-h-[90px]"
+                    disabled={isSaving}
+                  />
+                </div>
+              </div>
+
+              <DialogFooter className="flex-col sm:flex-row gap-2">
+                <Button
+                  onClick={handleMarkCompleted}
+                  className="w-full sm:w-auto"
+                  disabled={isSaving}
+                >
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                      Save Workout
+                    </>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setShowCompletionDialog(false)}
+                  disabled={isSaving}
+                >
+                  Continue Training
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={showEndDialog} onOpenChange={setShowEndDialog}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>End Workout?</DialogTitle>
             <DialogDescription>
-              You&apos;ve completed {completedCards.size} out of {workoutCards.length} exercises.
-              Do you want to save your progress?
+              You can save now or continue where you left off.
             </DialogDescription>
           </DialogHeader>
-          <div className="my-4 space-y-2">
-            <label htmlFor="end-workout-notes" className="text-sm font-medium text-text-secondary">
-              Notes (optional)
-            </label>
-            <Textarea
-              id="end-workout-notes"
-              placeholder="How did it feel? Any PRs or observations..."
-              value={workoutNotes}
-              onChange={(e) => setWorkoutNotes(e.target.value)}
-              className="min-h-[100px] resize-none"
-            />
+
+          <div className="rounded-lg bg-surface px-3 py-2 text-sm text-text-secondary">
+            {completedCount}/{workoutCards.length} moves completed • {formatDuration(sessionDuration)} elapsed
           </div>
+
           <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button
               variant="outline"
@@ -840,7 +1139,10 @@ export default function WorkoutSessionPage() {
               Continue Workout
             </Button>
             <Button
-              onClick={() => handleMarkCompleted()}
+              onClick={() => {
+                setShowEndDialog(false)
+                setShowCompletionDialog(true)
+              }}
               className="w-full sm:w-auto"
             >
               Save & End
@@ -849,107 +1151,5 @@ export default function WorkoutSessionPage() {
         </DialogContent>
       </Dialog>
     </>
-  )
-}
-
-interface WorkoutSetCardProps {
-  card: WorkoutCard
-  isCompleted: boolean
-  isActive: boolean
-  onComplete: () => void
-}
-
-function WorkoutSetCard({
-  card,
-  isCompleted,
-  isActive,
-  onComplete,
-}: WorkoutSetCardProps) {
-  return (
-    <Card
-      className={cn(
-        "transition-all duration-300",
-        isActive ? "bg-slate-800 border-slate-700 shadow-2xl" : "bg-slate-900 border-slate-800",
-        isCompleted && "border-green-500/50"
-      )}
-    >
-      <CardContent className="pt-8 pb-6">
-        {/* Exercise Number Badge */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-lg font-bold text-primary">
-            {card.exerciseNumber}
-          </div>
-          {isCompleted && (
-            <div className="flex items-center gap-2 text-green-500">
-              <CheckCircle className="h-6 w-6" />
-              <span className="text-sm font-medium">Complete</span>
-            </div>
-          )}
-        </div>
-
-        {/* Exercise Name */}
-        <h2 className="text-3xl font-bold text-white mb-2 capitalize">
-          {card.exerciseName}
-        </h2>
-
-        {/* Set Information */}
-        <div className="mb-6">
-          <Badge variant="secondary" className="text-sm">
-            Round {card.setNumber} of {card.totalSets}
-          </Badge>
-        </div>
-
-        {/* Exercise Details */}
-        <div className="grid grid-cols-2 gap-4 mb-6">
-          {card.reps && (
-            <div className="p-4 bg-slate-900/60 rounded-lg text-center">
-              <div className="text-3xl font-bold text-white">{card.reps}</div>
-              <div className="text-sm text-text-secondary">reps</div>
-            </div>
-          )}
-          {card.weight && (
-            <div className="p-4 bg-slate-900/60 rounded-lg text-center">
-              <div className="text-3xl font-bold text-white">{card.weight}</div>
-              <div className="text-sm text-text-secondary">weight</div>
-            </div>
-          )}
-        </div>
-
-        {/* Rest indicator (only shown on last set) */}
-        {card.isLastSetOfExercise && card.restSeconds && card.restSeconds > 0 && (
-          <div className="mb-6 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg text-center">
-            <div className="text-sm text-blue-400">
-              {card.restSeconds}s rest after this set
-            </div>
-          </div>
-        )}
-
-        {/* Notes */}
-        {card.notes && (
-          <p className="text-sm text-text-secondary mb-6 italic">
-            {card.notes}
-          </p>
-        )}
-
-        {/* Complete Button */}
-        {isActive && !isCompleted && (
-          <Button
-            onClick={onComplete}
-            className="w-full h-14 text-lg font-semibold bg-primary hover:bg-primary/90"
-            size="lg"
-          >
-            <CheckCircle className="h-6 w-6 mr-2" />
-            Complete Exercise
-          </Button>
-        )}
-
-        {isActive && isCompleted && (
-          <div className="w-full h-14 flex items-center justify-center bg-green-500/20 border border-green-500/50 rounded-lg">
-            <CheckCircle className="h-6 w-6 text-green-500 mr-2" />
-            <span className="text-lg font-semibold text-green-500">Completed</span>
-          </div>
-        )}
-      </CardContent>
-    </Card>
   )
 }
