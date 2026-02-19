@@ -88,3 +88,43 @@ export async function uploadWorkoutImages(
   );
   return Promise.all(uploadPromises);
 }
+
+/**
+ * Upload a blog featured image to S3
+ * @param file - The file buffer to upload
+ * @param slug - Blog post slug for organizing files
+ * @param filename - Original filename
+ * @returns S3 object key
+ */
+export async function uploadBlogImage(
+  file: Buffer,
+  slug: string,
+  filename: string
+): Promise<string> {
+  const timestamp = Date.now();
+  const sanitizedFilename = filename.replace(/[^a-zA-Z0-9.-]/g, "_");
+  const key = `blog/${slug}/${timestamp}-${sanitizedFilename}`;
+
+  const command = new PutObjectCommand({
+    Bucket: BUCKET_NAME,
+    Key: key,
+    Body: file,
+    ContentType: getContentType(filename),
+  });
+
+  await s3Client.send(command);
+  return key;
+}
+
+/**
+ * Get the public URL for a blog image
+ * @param key - S3 object key
+ * @returns Public URL (CloudFront if configured, otherwise direct S3)
+ */
+export function getBlogImageUrl(key: string): string {
+  const cloudFrontDomain = process.env.CLOUDFRONT_DOMAIN;
+  if (cloudFrontDomain) {
+    return `https://${cloudFrontDomain}/${key}`;
+  }
+  return `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${key}`;
+}

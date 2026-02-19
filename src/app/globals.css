@@ -248,6 +248,69 @@ button {
   @apply text-white; 
 }
 
-.nav-item:not(.active) { 
-  @apply text-text-secondary; 
+.nav-item:not(.active) {
+  @apply text-text-secondary;
+}
+
+/* Blog prose styles for rendered HTML content */
+.blog-prose {
+  color: #d4d4d8;
+  line-height: 1.8;
+}
+.blog-prose h1,
+.blog-prose h2,
+.blog-prose h3,
+.blog-prose h4 {
+  color: #fafafa;
+  font-weight: 700;
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+}
+.blog-prose h2 {
+  font-size: 1.5rem;
+}
+.blog-prose h3 {
+  font-size: 1.25rem;
+}
+.blog-prose p {
+  margin-bottom: 1.25rem;
+}
+.blog-prose a {
+  color: #FF6B35;
+  text-decoration: underline;
+}
+.blog-prose a:hover {
+  color: #FF9F2E;
+}
+.blog-prose ul,
+.blog-prose ol {
+  margin-bottom: 1.25rem;
+  padding-left: 1.5rem;
+}
+.blog-prose li {
+  margin-bottom: 0.5rem;
+}
+.blog-prose img {
+  border-radius: 0.75rem;
+  margin: 1.5rem 0;
+}
+.blog-prose blockquote {
+  border-left: 3px solid #FF6B35;
+  padding-left: 1rem;
+  margin: 1.5rem 0;
+  color: #a1a1aa;
+  font-style: italic;
+}
+.blog-prose code {
+  background: #27272a;
+  padding: 0.2rem 0.4rem;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
+}
+.blog-prose pre {
+  background: #18181b;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin-bottom: 1.25rem;
 }
