@@ -5,6 +5,8 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
+import { PublicNav } from "@/components/public/PublicNav"
+import { PublicFooter } from "@/components/public/PublicFooter"
 import {
     Dumbbell,
     Zap,
@@ -22,37 +24,7 @@ export default function LandingPage() {
     return (
         <div className="min-h-screen bg-[#0A0A0A] text-white overflow-x-hidden font-sans selection:bg-[#FF6B35] selection:text-white">
 
-            {/* Navbar */}
-            <nav className="fixed top-0 w-full z-50 border-b border-white/10 bg-[#0A0A0A]/80 backdrop-blur-md">
-                <div className="container mx-auto px-6 h-16 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <div className="bg-gradient-to-br from-[#FF6B35] to-[#FF9F2E] p-1.5 rounded-lg">
-                            <Dumbbell className="h-5 w-5 text-white" />
-                        </div>
-                        <span className="text-xl font-bold tracking-tight">Kinex Fit</span>
-                    </div>
-                    <div className="hidden md:flex items-center gap-8 text-sm font-medium text-white/70">
-                        <Link href="#features" className="hover:text-white transition-colors">Features</Link>
-                        <Link href="#how-it-works" className="hover:text-white transition-colors">How it works</Link>
-                        <Link href="#pricing" className="hover:text-white transition-colors">Pricing</Link>
-                        <Link href="/blog" className="hover:text-white transition-colors">Blog</Link>
-                    </div>
-                    <div className="flex items-center gap-4">
-                        <Link href="/sign-in" className="text-sm font-medium text-white/70 hover:text-white hidden sm:block">
-                            Log in
-                        </Link>
-                        <Link
-                            href="/beta-signup"
-                            className={cn(
-                                buttonVariants(),
-                                "bg-[#FF6B35] hover:bg-[#E55A2B] text-white border-none rounded-full px-6"
-                            )}
-                        >
-                            Get Early Access
-                        </Link>
-                    </div>
-                </div>
-            </nav>
+            <PublicNav />
 
             {/* Hero Section */}
             <section className="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden">
@@ -81,7 +53,7 @@ export default function LandingPage() {
 
                     <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                         <Link
-                            href="/beta-signup"
+                            href="/auth/login?mode=signup"
                             className={cn(
                                 buttonVariants({ size: "lg" }),
                                 "bg-[#FF6B35] hover:bg-[#E55A2B] text-white rounded-full px-8 h-12 text-base shadow-[0_0_20px_rgba(255,107,53,0.3)] hover:shadow-[0_0_30px_rgba(255,107,53,0.5)] transition-all duration-300 flex items-center"
@@ -250,7 +222,7 @@ export default function LandingPage() {
                             </p>
                             <div className="flex flex-col sm:flex-row gap-4 justify-center">
                                 <Link
-                                    href="/beta-signup"
+                                    href="/auth/login?mode=signup"
                                     className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-lg font-bold transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-white text-[#FF6B35] hover:bg-white/90 hover:text-[#E55A2B] px-10 h-14 shadow-lg"
                                 >
                                     Get Started for Free
@@ -264,30 +236,7 @@ export default function LandingPage() {
                 </div>
             </section>
 
-            {/* Footer */}
-            <footer className="border-t border-zinc-900 bg-[#050505] py-12 text-center md:text-left">
-                <div className="container mx-auto px-6">
-                    <div className="flex flex-col md:flex-row justify-between items-center gap-8">
-                        <div className="flex items-center gap-2">
-                            <Dumbbell className="h-6 w-6 text-[#FF6B35]" />
-                            <span className="text-xl font-bold text-white">Kinex Fit</span>
-                        </div>
-                        <div className="text-zinc-500 text-sm">
-                            &copy; {new Date().getFullYear()} Kinex Fit. All rights reserved.
-                        </div>
-                        <div className="flex gap-6">
-                            {[
-                                { icon: Users, href: "#" },
-                                { icon: Smartphone, href: "#" },
-                            ].map((item, i) => (
-                                <Link key={i} href={item.href} className="text-zinc-500 hover:text-[#FF6B35] transition-colors">
-                                    <item.icon className="w-5 h-5" />
-                                </Link>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            </footer>
+            <PublicFooter />
         </div>
     )
 }
