@@ -90,6 +90,14 @@ export const RATE_LIMITS = {
     requests: 10,
     window: '15 m', // 10 login attempts per 15 minutes
   },
+  'auth:mobile-signin': {
+    requests: 10,
+    window: '15 m', // 10 mobile sign-in attempts per 15 minutes
+  },
+  'auth:mobile-refresh': {
+    requests: 30,
+    window: '15 m', // 30 token refresh attempts per 15 minutes
+  },
 
   // File uploads
   'api:upload': {

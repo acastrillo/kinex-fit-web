@@ -43,6 +43,14 @@ const WORKOUTS_TABLE = process.env.DYNAMODB_WORKOUTS_TABLE || "spotter-workouts"
 const WEBHOOK_EVENTS_TABLE = process.env.DYNAMODB_WEBHOOK_EVENTS_TABLE || "spotter-webhook-events";
 const WORKOUT_COMPLETIONS_TABLE = process.env.DYNAMODB_WORKOUT_COMPLETIONS_TABLE || "spotter-workout-completions";
 
+type AuthProviderName = "apple" | "google" | "facebook" | "credentials";
+
+interface AuthProviderLink {
+  sub: string;
+  linkedAt: string; // ISO timestamp
+  email?: string;
+}
+
 // User type matching Prisma schema + subscription fields
 // Note: Dates are stored as ISO strings in DynamoDB
 export interface DynamoDBUser {
@@ -118,6 +126,11 @@ export interface DynamoDBUser {
   onboardingCompleted?: boolean;
   onboardingCompletedAt?: string | null;
   onboardingSkipped?: boolean;
+
+  // Mobile authentication
+  authProviders?: Partial<Record<AuthProviderName, AuthProviderLink>>;
+  mobileRefreshTokenHash?: string | null;
+  mobileLastSignIn?: string | null;
 }
 
 // User operations
@@ -284,6 +297,11 @@ export const dynamoDBUsers = {
       onboardingCompleted: user.onboardingCompleted ?? false,
       onboardingSkipped: user.onboardingSkipped ?? false,
       onboardingCompletedAt: user.onboardingCompletedAt || null,
+
+      // Mobile authentication state
+      authProviders: user.authProviders || undefined,
+      mobileRefreshTokenHash: user.mobileRefreshTokenHash ?? null,
+      mobileLastSignIn: user.mobileLastSignIn || null,
     };
 
     // Remove stripeCustomerId from item if it's null/undefined to avoid GSI validation errors
