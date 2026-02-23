@@ -20,7 +20,7 @@
  * }
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { dynamoDBUsers } from "@/lib/dynamodb";
@@ -35,6 +35,10 @@ import {
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getRequestIp } from "@/lib/request-ip";
 import { normalizeSubscriptionTier } from "@/lib/subscription-tiers";
+import {
+  getMobileAuthTraceId,
+  jsonWithMobileAuthTrace,
+} from "@/lib/mobile-auth-trace";
 
 export const runtime = "nodejs";
 
@@ -45,17 +49,19 @@ const refreshSchema = z.object({
 
 export async function POST(request: NextRequest) {
   const requestId = crypto.randomUUID().slice(0, 8);
+  const traceId = getMobileAuthTraceId(request);
+  const logPrefix = `[Mobile Refresh:${requestId}] trace=${traceId}`;
 
   try {
+    console.log(`${logPrefix} Refresh request received`);
+
     // Rate limit by IP
     const ip = getRequestIp(request.headers) || "unknown";
     const rateLimit = await checkRateLimit(ip, "auth:mobile-refresh");
 
     if (!rateLimit.success) {
-      console.warn(
-        `[Mobile Refresh:${requestId}] Rate limit exceeded for IP ${ip}`
-      );
-      return NextResponse.json(
+      console.warn(`${logPrefix} Rate limit exceeded for IP ${ip}`);
+      return jsonWithMobileAuthTrace(
         {
           error: "Too many refresh attempts",
           message: "Please wait before trying again",
@@ -68,7 +74,8 @@ export async function POST(request: NextRequest) {
               (rateLimit.reset - Date.now()) / 1000
             ).toString(),
           },
-        }
+        },
+        traceId
       );
     }
 
@@ -77,9 +84,10 @@ export async function POST(request: NextRequest) {
     const parsed = refreshSchema.safeParse(body);
 
     if (!parsed.success) {
-      return NextResponse.json(
+      return jsonWithMobileAuthTrace(
         { error: parsed.error.errors[0].message },
-        { status: 400 }
+        { status: 400 },
+        traceId
       );
     }
 
@@ -91,12 +99,9 @@ export async function POST(request: NextRequest) {
       payload = await verifyRefreshToken(refreshToken);
     } catch (error) {
       if (error instanceof Error) {
-        console.warn(
-          `[Mobile Refresh:${requestId}] Token verification failed:`,
-          error.message
-        );
+        console.warn(`${logPrefix} Token verification failed:`, error.message);
 
-        return NextResponse.json(
+        return jsonWithMobileAuthTrace(
           {
             error: "Invalid refresh token",
             message: error.message,
@@ -104,7 +109,8 @@ export async function POST(request: NextRequest) {
               ? "TOKEN_EXPIRED"
               : "INVALID_TOKEN",
           },
-          { status: 401 }
+          { status: 401 },
+          traceId
         );
       }
       throw error;
@@ -114,9 +120,10 @@ export async function POST(request: NextRequest) {
     const jti = payload.jti;
 
     if (!userId || !jti) {
-      return NextResponse.json(
+      return jsonWithMobileAuthTrace(
         { error: "Invalid refresh token structure" },
-        { status: 401 }
+        { status: 401 },
+        traceId
       );
     }
 
@@ -124,24 +131,25 @@ export async function POST(request: NextRequest) {
     const user = await dynamoDBUsers.get(userId);
 
     if (!user) {
-      console.warn(
-        `[Mobile Refresh:${requestId}] User not found: ${userId}`
+      console.warn(`${logPrefix} User not found: ${userId}`);
+      return jsonWithMobileAuthTrace(
+        { error: "User not found" },
+        { status: 401 },
+        traceId
       );
-      return NextResponse.json({ error: "User not found" }, { status: 401 });
     }
 
     // Verify the refresh token JTI matches the stored hash
     if (!user.mobileRefreshTokenHash) {
-      console.warn(
-        `[Mobile Refresh:${requestId}] No refresh token stored for user ${userId}`
-      );
-      return NextResponse.json(
+      console.warn(`${logPrefix} No refresh token stored for user ${userId}`);
+      return jsonWithMobileAuthTrace(
         {
           error: "Session expired",
           message: "Please sign in again",
           code: "SESSION_EXPIRED",
         },
-        { status: 401 }
+        { status: 401 },
+        traceId
       );
     }
 
@@ -150,7 +158,7 @@ export async function POST(request: NextRequest) {
     if (!jtiValid) {
       // Token JTI doesn't match - either stolen token or already rotated
       console.warn(
-        `[Mobile Refresh:${requestId}] Refresh token JTI mismatch for user ${userId} - possible token reuse`
+        `${logPrefix} Refresh token JTI mismatch for user ${userId} - possible token reuse`
       );
 
       // Invalidate all mobile sessions for security (potential token theft)
@@ -159,13 +167,14 @@ export async function POST(request: NextRequest) {
         mobileRefreshTokenHash: null,
       });
 
-      return NextResponse.json(
+      return jsonWithMobileAuthTrace(
         {
           error: "Invalid refresh token",
           message: "This token has already been used or revoked. Please sign in again.",
           code: "TOKEN_REUSED",
         },
-        { status: 401 }
+        { status: 401 },
+        traceId
       );
     }
 
@@ -202,21 +211,24 @@ export async function POST(request: NextRequest) {
       mobileLastSignIn: new Date().toISOString(),
     });
 
-    console.log(
-      `[Mobile Refresh:${requestId}] Tokens refreshed for user ${userId}`
-    );
+    console.log(`${logPrefix} Tokens refreshed for user ${userId}`);
 
-    return NextResponse.json({
-      accessToken: newAccessToken,
-      refreshToken: newRefreshToken,
-      expiresIn: getAccessTokenTtlSeconds(),
-      tokenType: "Bearer",
-    });
+    return jsonWithMobileAuthTrace(
+      {
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
+        expiresIn: getAccessTokenTtlSeconds(),
+        tokenType: "Bearer",
+      },
+      undefined,
+      traceId
+    );
   } catch (error) {
-    console.error(`[Mobile Refresh:${requestId}] Unexpected error:`, error);
-    return NextResponse.json(
+    console.error(`${logPrefix} Unexpected error:`, error);
+    return jsonWithMobileAuthTrace(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: 500 },
+      traceId
     );
   }
 }

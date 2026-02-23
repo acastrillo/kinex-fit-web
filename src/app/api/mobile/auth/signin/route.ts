@@ -25,7 +25,7 @@
  * }
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 
@@ -44,6 +44,10 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { getRequestIp } from "@/lib/request-ip";
 import { maskEmail } from "@/lib/safe-logger";
 import { normalizeSubscriptionTier } from "@/lib/subscription-tiers";
+import {
+  getMobileAuthTraceId,
+  jsonWithMobileAuthTrace,
+} from "@/lib/mobile-auth-trace";
 
 export const runtime = "nodejs";
 
@@ -57,17 +61,19 @@ const signinSchema = z.object({
 
 export async function POST(request: NextRequest) {
   const requestId = crypto.randomUUID().slice(0, 8);
+  const traceId = getMobileAuthTraceId(request);
+  const logPrefix = `[Mobile Auth:${requestId}] trace=${traceId}`;
 
   try {
+    console.log(`${logPrefix} Sign-in request received`);
+
     // Rate limit by IP
     const ip = getRequestIp(request.headers) || "unknown";
     const rateLimit = await checkRateLimit(ip, "auth:mobile-signin");
 
     if (!rateLimit.success) {
-      console.warn(
-        `[Mobile Auth:${requestId}] Rate limit exceeded for IP ${ip}`
-      );
-      return NextResponse.json(
+      console.warn(`${logPrefix} Rate limit exceeded for IP ${ip}`);
+      return jsonWithMobileAuthTrace(
         {
           error: "Too many sign-in attempts",
           message: "Please wait before trying again",
@@ -80,7 +86,8 @@ export async function POST(request: NextRequest) {
               (rateLimit.reset - Date.now()) / 1000
             ).toString(),
           },
-        }
+        },
+        traceId
       );
     }
 
@@ -89,17 +96,16 @@ export async function POST(request: NextRequest) {
     const parsed = signinSchema.safeParse(body);
 
     if (!parsed.success) {
-      return NextResponse.json(
+      return jsonWithMobileAuthTrace(
         { error: parsed.error.errors[0].message },
-        { status: 400 }
+        { status: 400 },
+        traceId
       );
     }
 
     const { provider, identityToken, firstName, lastName } = parsed.data;
 
-    console.log(
-      `[Mobile Auth:${requestId}] Sign-in attempt with provider: ${provider}`
-    );
+    console.log(`${logPrefix} Sign-in attempt with provider: ${provider}`);
 
     // Validate identity token with the provider
     let identity;
@@ -110,10 +116,7 @@ export async function POST(request: NextRequest) {
       });
     } catch (error) {
       if (error instanceof IdentityValidationError) {
-        console.warn(
-          `[Mobile Auth:${requestId}] Identity validation failed:`,
-          error.message
-        );
+        console.warn(`${logPrefix} Identity validation failed:`, error.message);
 
         const statusCode =
           error.code === "CONFIG_ERROR"
@@ -122,20 +125,21 @@ export async function POST(request: NextRequest) {
               ? 502
               : 401;
 
-        return NextResponse.json(
+        return jsonWithMobileAuthTrace(
           {
             error: "Authentication failed",
             message: error.message,
             code: error.code,
           },
-          { status: statusCode }
+          { status: statusCode },
+          traceId
         );
       }
       throw error;
     }
 
     console.log(
-      `[Mobile Auth:${requestId}] Identity validated: ${maskEmail(identity.email)} via ${provider}`
+      `${logPrefix} Identity validated: ${maskEmail(identity.email)} via ${provider}`
     );
 
     // Look up existing user by email
@@ -144,9 +148,7 @@ export async function POST(request: NextRequest) {
 
     if (user) {
       // Existing user - link this provider if not already linked
-      console.log(
-        `[Mobile Auth:${requestId}] Found existing user: ${user.id}`
-      );
+      console.log(`${logPrefix} Found existing user: ${user.id}`);
 
       const authProviders = user.authProviders || {};
       const providerKey = provider as keyof typeof authProviders;
@@ -172,9 +174,7 @@ export async function POST(request: NextRequest) {
           mobileLastSignIn: new Date().toISOString(),
         });
 
-        console.log(
-          `[Mobile Auth:${requestId}] Linked ${provider} to existing user ${user.id}`
-        );
+        console.log(`${logPrefix} Linked ${provider} to existing user ${user.id}`);
       } else {
         // Provider already linked - just update last sign-in
         await dynamoDBUsers.upsert({
@@ -191,9 +191,7 @@ export async function POST(request: NextRequest) {
       const userId = uuidv4();
       const now = new Date().toISOString();
 
-      console.log(
-        `[Mobile Auth:${requestId}] Creating new user: ${userId}`
-      );
+      console.log(`${logPrefix} Creating new user: ${userId}`);
 
       const newUser: DynamoDBUser = {
         id: userId,
@@ -255,9 +253,7 @@ export async function POST(request: NextRequest) {
           // Try to fetch the user that was created
           user = await dynamoDBUsers.getByEmail(identity.email);
           if (user) {
-            console.log(
-              `[Mobile Auth:${requestId}] Race condition - using existing user ${user.id}`
-            );
+            console.log(`${logPrefix} Race condition - using existing user ${user.id}`);
             isNewUser = false;
           } else {
             throw error;
@@ -273,10 +269,11 @@ export async function POST(request: NextRequest) {
     }
 
     if (!user) {
-      console.error(`[Mobile Auth:${requestId}] Failed to create/find user`);
-      return NextResponse.json(
+      console.error(`${logPrefix} Failed to create/find user`);
+      return jsonWithMobileAuthTrace(
         { error: "Failed to create user account" },
-        { status: 500 }
+        { status: 500 },
+        traceId
       );
     }
 
@@ -298,11 +295,11 @@ export async function POST(request: NextRequest) {
     });
 
     console.log(
-      `[Mobile Auth:${requestId}] ${isNewUser ? "Created new user" : "Signed in existing user"}: ${user.id}`
+      `${logPrefix} ${isNewUser ? "Created new user" : "Signed in existing user"}: ${user.id}`
     );
 
     // Return tokens and user profile
-    return NextResponse.json(
+    return jsonWithMobileAuthTrace(
       {
         accessToken,
         refreshToken,
@@ -318,13 +315,15 @@ export async function POST(request: NextRequest) {
         },
         isNewUser,
       },
-      { status: isNewUser ? 201 : 200 }
+      { status: isNewUser ? 201 : 200 },
+      traceId
     );
   } catch (error) {
-    console.error(`[Mobile Auth:${requestId}] Unexpected error:`, error);
-    return NextResponse.json(
+    console.error(`${logPrefix} Unexpected error:`, error);
+    return jsonWithMobileAuthTrace(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: 500 },
+      traceId
     );
   }
 }
