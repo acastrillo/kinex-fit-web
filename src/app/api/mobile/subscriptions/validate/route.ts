@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       subscriptionTier: user.subscriptionTier,
       subscriptionStatus: user.subscriptionStatus,
-      subscriptionExpiresAt: user.subscriptionExpiresAt,
+      subscriptionExpiresAt: user.subscriptionEndDate,
     });
   } catch (error) {
     console.error('Receipt validation error:', error);

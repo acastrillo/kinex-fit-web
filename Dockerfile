@@ -4,6 +4,7 @@ FROM node:18-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
+USER root
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
@@ -12,6 +13,7 @@ RUN npm ci
 
 # Rebuild the source code only when needed
 FROM base AS builder
+USER root
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -29,13 +31,14 @@ RUN mkdir -p /tmp/prisma \
 # Production image, copy all the files and run next
 FROM base AS runner
 WORKDIR /app
+USER root
 
-ENV NODE_ENV production
+ENV NODE_ENV=production
 
 RUN apk add --no-cache curl
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN addgroup --system --gid 1001 nodejs 2>/dev/null || true
+RUN adduser --system --uid 1001 nextjs 2>/dev/null || true
 
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
@@ -47,7 +50,7 @@ USER nextjs
 
 EXPOSE 3000
 
-ENV PORT 3000
-ENV HOSTNAME "0.0.0.0"
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
 
 CMD ["node", "server.js"]

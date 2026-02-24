@@ -1,5 +1,16 @@
-import { dynamoDBWorkouts, DynamoDBWorkout } from './dynamodb';
+import { dynamoDBWorkouts, DynamoDBWorkout, DynamoDBExercise } from './dynamodb';
 import { v4 as uuidv4 } from 'uuid';
+
+function toExercises(input: WorkoutInput['exercises']): DynamoDBExercise[] {
+  return (input || []).map(e => ({
+    id: uuidv4(),
+    name: e.name,
+    sets: e.sets ?? 0,
+    reps: e.reps ?? '0',
+    weight: e.weight,
+    notes: e.notes,
+  }));
+}
 
 export type { DynamoDBWorkout };
 
@@ -48,11 +59,11 @@ export interface ListWorkoutsResult {
 export async function createWorkout(input: WorkoutInput): Promise<DynamoDBWorkout> {
   const workoutId = input.workoutId || uuidv4();
 
-  const workout: Omit<DynamoDBWorkout, 'userId' | 'createdAt' | 'updatedAt'> & { createdAt?: string } = {
+  const workout = {
     workoutId,
     title: input.title,
     description: input.description || null,
-    exercises: input.exercises || [],
+    exercises: toExercises(input.exercises),
     content: input.content,
     author: null,
     source: input.source || 'manual',
@@ -75,7 +86,7 @@ export async function createWorkout(input: WorkoutInput): Promise<DynamoDBWorkou
     aiEnhanced: input.aiEnhanced || null,
     aiNotes: input.aiNotes || null,
     muscleGroups: input.muscleGroups || null,
-  };
+  } as Omit<DynamoDBWorkout, 'userId' | 'createdAt' | 'updatedAt'>;
 
   return await dynamoDBWorkouts.upsert(input.userId, workout);
 }
@@ -123,11 +134,11 @@ export async function updateWorkout(
     throw new Error('Workout not found');
   }
 
-  const workout: Omit<DynamoDBWorkout, 'userId' | 'createdAt' | 'updatedAt'> & { createdAt: string } = {
+  const workout = {
     workoutId,
     title: input.title,
     description: input.description || null,
-    exercises: input.exercises || [],
+    exercises: toExercises(input.exercises),
     content: input.content,
     author: existing.author,
     createdAt: existing.createdAt,
@@ -151,7 +162,7 @@ export async function updateWorkout(
     aiEnhanced: input.aiEnhanced !== undefined ? input.aiEnhanced : existing.aiEnhanced,
     aiNotes: input.aiNotes !== undefined ? input.aiNotes : existing.aiNotes,
     muscleGroups: input.muscleGroups !== undefined ? input.muscleGroups : existing.muscleGroups,
-  };
+  } as Omit<DynamoDBWorkout, 'userId' | 'createdAt' | 'updatedAt'> & { createdAt: string };
 
   return await dynamoDBWorkouts.upsert(userId, workout);
 }

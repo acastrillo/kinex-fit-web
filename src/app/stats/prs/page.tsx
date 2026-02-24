@@ -316,7 +316,7 @@ export default function PersonalRecordsPage() {
                                   <Tooltip
                                     contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333' }}
                                     labelStyle={{ color: '#fff' }}
-                                    formatter={(value: any, name: string) => {
+                                    formatter={(value: any, name?: string) => {
                                       if (name === 'oneRepMax') return [`${value} lbs`, '1RM']
                                       return [value, name]
                                     }}

@@ -1,6 +1,10 @@
-import { dynamoDBUsers, DynamoDBUser } from './dynamodb';
+import { dynamoDBUsers, DynamoDBUser, getDynamoDb } from './dynamodb';
+import { UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import type { TrainingProfile, PersonalRecord } from './training-profile';
 
 export type { DynamoDBUser };
+
+const USERS_TABLE = process.env.DYNAMODB_USERS_TABLE || 'spotter-users';
 
 export interface UpdateSubscriptionInput {
   subscriptionTier: string;
@@ -28,16 +32,7 @@ export interface UpdateOnboardingInput {
  * Get user by ID
  */
 export async function getUserById(userId: string): Promise<DynamoDBUser | null> {
-  try {
-    const result = await dynamoDBUsers.get({
-      userId,
-    });
-
-    return result.Item as DynamoDBUser || null;
-  } catch (error) {
-    console.error('Error getting user:', error);
-    throw error;
-  }
+  return dynamoDBUsers.get(userId);
 }
 
 /**
@@ -47,32 +42,11 @@ export async function updateUserSubscription(
   userId: string,
   subscription: UpdateSubscriptionInput
 ): Promise<void> {
-  try {
-    const now = new Date().toISOString();
-
-    await dynamoDBUsers.update({
-      Key: { userId },
-      UpdateExpression: `
-        SET subscriptionTier = :tier,
-            subscriptionStatus = :status,
-            subscriptionExpiresAt = :expiresAt,
-            lastReceiptValidation = :lastValidation,
-            updatedAt = :updatedAt
-      `,
-      ExpressionAttributeValues: {
-        ':tier': subscription.subscriptionTier,
-        ':status': subscription.subscriptionStatus,
-        ':expiresAt': subscription.subscriptionExpiresAt,
-        ':lastValidation': subscription.lastReceiptValidation,
-        ':updatedAt': now,
-      },
-    });
-
-    console.log(`Updated subscription for user ${userId}:`, subscription);
-  } catch (error) {
-    console.error('Error updating user subscription:', error);
-    throw error;
-  }
+  await dynamoDBUsers.updateSubscription(userId, {
+    tier: subscription.subscriptionTier as "free" | "core" | "pro" | "elite",
+    status: subscription.subscriptionStatus as "active" | "inactive" | "trialing" | "canceled" | "past_due",
+    endDate: subscription.subscriptionExpiresAt ? new Date(subscription.subscriptionExpiresAt) : null,
+  });
 }
 
 /**
@@ -82,26 +56,10 @@ export async function incrementUserQuota(
   userId: string,
   quotaType: 'scan' | 'ai'
 ): Promise<void> {
-  try {
-    const now = new Date().toISOString();
-    const quotaField = quotaType === 'scan' ? 'scanQuotaUsed' : 'aiQuotaUsed';
-
-    await dynamoDBUsers.update({
-      Key: { userId },
-      UpdateExpression: `
-        SET ${quotaField} = ${quotaField} + :increment,
-            updatedAt = :updatedAt
-      `,
-      ExpressionAttributeValues: {
-        ':increment': 1,
-        ':updatedAt': now,
-      },
-    });
-
-    console.log(`Incremented ${quotaType} quota for user ${userId}`);
-  } catch (error) {
-    console.error('Error incrementing user quota:', error);
-    throw error;
+  if (quotaType === 'scan') {
+    await dynamoDBUsers.incrementOCRUsage(userId);
+  } else {
+    await dynamoDBUsers.incrementAIUsage(userId);
   }
 }
 
@@ -109,16 +67,7 @@ export async function incrementUserQuota(
  * Delete user permanently
  */
 export async function deleteUser(userId: string): Promise<void> {
-  try {
-    await dynamoDBUsers.delete({
-      Key: { userId },
-    });
-
-    console.log(`Deleted user: ${userId}`);
-  } catch (error) {
-    console.error('Error deleting user:', error);
-    throw error;
-  }
+  await dynamoDBUsers.delete(userId);
 }
 
 /**
@@ -129,11 +78,11 @@ export async function registerDeviceToken(
   deviceToken: string,
   platform: 'ios' | 'android'
 ): Promise<void> {
-  try {
-    const now = new Date().toISOString();
-
-    await dynamoDBUsers.update({
-      Key: { userId },
+  const now = new Date().toISOString();
+  await getDynamoDb().send(
+    new UpdateCommand({
+      TableName: USERS_TABLE,
+      Key: { id: userId },
       UpdateExpression: `
         SET pushNotificationToken = :token,
             pushNotificationPlatform = :platform,
@@ -146,13 +95,8 @@ export async function registerDeviceToken(
         ':registeredAt': now,
         ':updatedAt': now,
       },
-    });
-
-    console.log(`Registered device token for user ${userId}`);
-  } catch (error) {
-    console.error('Error registering device token:', error);
-    throw error;
-  }
+    })
+  );
 }
 
 /**
@@ -162,38 +106,32 @@ export async function updateUserOnboarding(
   userId: string,
   onboarding: UpdateOnboardingInput
 ): Promise<void> {
-  try {
-    const now = new Date().toISOString();
-
-    await dynamoDBUsers.update({
-      Key: { userId },
-      UpdateExpression: `
-        SET experienceLevel = :experienceLevel,
-            trainingDaysPerWeek = :trainingDaysPerWeek,
-            sessionDuration = :sessionDuration,
-            equipment = :equipment,
-            goals = :goals,
-            personalRecords = :personalRecords,
-            onboardingCompleted = :onboardingCompleted,
-            onboardingCompletedAt = :completedAt,
-            updatedAt = :updatedAt
-      `,
-      ExpressionAttributeValues: {
-        ':experienceLevel': onboarding.experienceLevel,
-        ':trainingDaysPerWeek': onboarding.trainingDaysPerWeek,
-        ':sessionDuration': onboarding.sessionDuration,
-        ':equipment': onboarding.equipment,
-        ':goals': onboarding.goals,
-        ':personalRecords': onboarding.personalRecords,
-        ':onboardingCompleted': onboarding.onboardingCompleted,
-        ':completedAt': now,
-        ':updatedAt': now,
-      },
-    });
-
-    console.log(`Updated onboarding for user ${userId}`);
-  } catch (error) {
-    console.error('Error updating user onboarding:', error);
-    throw error;
+  // Convert personal records array to Record<string, PersonalRecord>
+  const personalRecords: Record<string, PersonalRecord> = {};
+  for (const pr of onboarding.personalRecords) {
+    personalRecords[pr.exerciseName] = {
+      weight: pr.weight,
+      reps: pr.reps ?? 1,
+      unit: (pr.unit as 'kg' | 'lbs') || 'lbs',
+      date: new Date().toISOString().split('T')[0],
+    };
   }
+
+  const profile: TrainingProfile = {
+    experience: (onboarding.experienceLevel as 'beginner' | 'intermediate' | 'advanced') || 'beginner',
+    trainingDays: onboarding.trainingDaysPerWeek ?? 3,
+    sessionDuration: onboarding.sessionDuration ?? undefined,
+    equipment: onboarding.equipment,
+    goals: onboarding.goals,
+    personalRecords,
+    constraints: [],
+    updatedAt: new Date().toISOString(),
+  };
+
+  await dynamoDBUsers.updateTrainingProfile(userId, profile);
+
+  await dynamoDBUsers.update(userId, {
+    onboardingCompleted: onboarding.onboardingCompleted,
+    onboardingCompletedAt: new Date().toISOString(),
+  });
 }
