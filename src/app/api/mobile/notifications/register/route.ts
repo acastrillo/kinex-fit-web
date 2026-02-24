@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUserId } from '@/lib/mobile-auth';
 import { registerDeviceToken } from '@/lib/dynamodb-users';
 
+export const runtime = "nodejs";
+
 /**
  * POST /api/mobile/notifications/register
  *

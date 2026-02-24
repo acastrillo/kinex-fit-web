@@ -4,6 +4,8 @@ import { deleteUser } from '@/lib/dynamodb-users';
 import { deleteAllUserWorkouts } from '@/lib/dynamodb-workouts';
 import { deleteAllUserMetrics } from '@/lib/dynamodb-body-metrics';
 
+export const runtime = "nodejs";
+
 /**
  * DELETE /api/mobile/user/delete
  *

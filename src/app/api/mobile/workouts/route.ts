@@ -6,6 +6,8 @@ import {
   WorkoutInput
 } from '@/lib/dynamodb-workouts';
 
+export const runtime = "nodejs";
+
 // GET /api/mobile/workouts - List user's workouts
 export async function GET(request: NextRequest) {
   try {

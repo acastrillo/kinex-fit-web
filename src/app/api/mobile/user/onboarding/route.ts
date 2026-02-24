@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUserId } from '@/lib/mobile-auth';
 import { updateUserOnboarding } from '@/lib/dynamodb-users';
 
+export const runtime = "nodejs";
+
 /**
  * POST /api/mobile/user/onboarding
  *
