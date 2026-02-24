@@ -3,6 +3,7 @@ import { getServerSession, Session } from "next-auth";
 import { headers } from "next/headers";
 import { decode } from "next-auth/jwt";
 import { authOptions } from "@/lib/auth-options";
+import { verifyAccessToken } from "@/lib/mobile-jwt";
 
 /**
  * Safely extracts and validates the authenticated user ID from the session.
@@ -105,6 +106,17 @@ async function extractBearerUserId(): Promise<{ userId: string } | null> {
 
   try {
     const token = authHeader.substring(7);
+    // Mobile apps use MOBILE_JWT_SECRET-signed access tokens.
+    const mobilePayload = await verifyAccessToken(token);
+    if (mobilePayload?.sub) {
+      return { userId: mobilePayload.sub };
+    }
+  } catch {
+    // Not a mobile token (or invalid) - try NextAuth token decoding below.
+  }
+
+  try {
+    const token = authHeader.substring(7);
     const decoded = await decode({ token, secret: process.env.AUTH_SECRET! });
     if (decoded?.id) {
       return { userId: decoded.id as string };
@@ -123,6 +135,29 @@ async function extractBearerSession(): Promise<{ userId: string; session: Sessio
   const headersList = await headers();
   const authHeader = headersList.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) return null;
+
+  try {
+    const token = authHeader.substring(7);
+    // Mobile apps use MOBILE_JWT_SECRET-signed access tokens.
+    const mobilePayload = await verifyAccessToken(token);
+    if (mobilePayload?.sub) {
+      const session: Session = {
+        user: {
+          id: mobilePayload.sub,
+          email: mobilePayload.email,
+          name: mobilePayload.email,
+          firstName: null,
+          lastName: null,
+          subscriptionTier: mobilePayload.tier,
+          provider: mobilePayload.provider,
+        },
+        expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      };
+      return { userId: mobilePayload.sub, session };
+    }
+  } catch {
+    // Not a mobile token (or invalid) - try NextAuth token decoding below.
+  }
 
   try {
     const token = authHeader.substring(7);
