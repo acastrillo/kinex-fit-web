@@ -8,7 +8,6 @@
 import { NextRequest } from "next/server";
 import {
   verifyAccessToken,
-  type MobileAccessTokenPayload,
 } from "./mobile-jwt";
 
 export interface MobileAuthResult {
@@ -97,4 +96,18 @@ export async function authenticateMobileRequest(
       status: 401,
     };
   }
+}
+
+/**
+ * Backward-compatible helper used by legacy mobile routes.
+ * Returns the authenticated user ID, or null if authentication fails.
+ */
+export async function getAuthenticatedUserId(
+  request: NextRequest
+): Promise<string | null> {
+  const auth = await authenticateMobileRequest(request);
+  if ("error" in auth) {
+    return null;
+  }
+  return auth.userId;
 }

@@ -11,6 +11,12 @@ export async function POST(request: NextRequest) {
   try {
     // Authenticate user
     const userId = await getAuthenticatedUserId(request);
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
 
     // Parse request body
     const body = await request.json();

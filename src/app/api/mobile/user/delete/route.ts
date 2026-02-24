@@ -21,6 +21,12 @@ export async function DELETE(request: NextRequest) {
   try {
     // Authenticate user
     const userId = await getAuthenticatedUserId(request);
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
 
     console.log(`Account deletion requested for user: ${userId}`);
 

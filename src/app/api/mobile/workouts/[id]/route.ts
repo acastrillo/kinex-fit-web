@@ -10,7 +10,7 @@ import {
 // GET /api/mobile/workouts/:id - Get specific workout
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     // Authenticate user
@@ -22,7 +22,7 @@ export async function GET(
       );
     }
 
-    const workoutId = params.id;
+    const { id: workoutId } = await params;
 
     // Fetch workout from DynamoDB
     const workout = await getWorkout(userId, workoutId);
@@ -55,7 +55,7 @@ export async function GET(
 // PUT /api/mobile/workouts/:id - Update workout
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     // Authenticate user
@@ -67,7 +67,7 @@ export async function PUT(
       );
     }
 
-    const workoutId = params.id;
+    const { id: workoutId } = await params;
 
     // Verify workout exists and user owns it
     const existingWorkout = await getWorkout(userId, workoutId);
@@ -128,7 +128,7 @@ export async function PUT(
 // DELETE /api/mobile/workouts/:id - Delete workout
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     // Authenticate user
@@ -140,7 +140,7 @@ export async function DELETE(
       );
     }
 
-    const workoutId = params.id;
+    const { id: workoutId } = await params;
 
     // Verify workout exists and user owns it
     const existingWorkout = await getWorkout(userId, workoutId);

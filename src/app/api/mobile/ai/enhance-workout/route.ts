@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
     console.log(`[Mobile AI:${requestId}] Enhance request from user ${userId}`);
 
     // Get user and check quota
-    let user = await dynamoDBUsers.get(userId);
+    const user = await dynamoDBUsers.get(userId);
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
@@ -244,10 +244,7 @@ export async function POST(request: NextRequest) {
 
     // If enhancing existing workout, save changes
     if (existingWorkout && workoutId) {
-      await dynamoDBWorkouts.update(userId, workoutId, {
-        ...responseWorkout,
-        updatedAt: new Date().toISOString(),
-      });
+      await dynamoDBWorkouts.update(userId, workoutId, responseWorkout);
     }
 
     console.log(`[Mobile AI:${requestId}] Enhancement complete: ${responseWorkout.title}`);
