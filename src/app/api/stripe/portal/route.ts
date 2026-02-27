@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { getAuthenticatedUserId } from '@/lib/api-auth'
 import { dynamoDBUsers } from '@/lib/dynamodb'
 import { getReturnUrls, getStripe } from '@/lib/stripe-server'
@@ -6,7 +7,11 @@ import { getSystemSettings } from '@/lib/system-settings'
 
 export const runtime = 'nodejs'
 
-export async function POST() {
+const requestSchema = z.object({
+  returnContext: z.enum(['web', 'mobile']).optional().default('web'),
+})
+
+export async function POST(req: NextRequest) {
   try {
     const auth = await getAuthenticatedUserId()
     if ('error' in auth) return auth.error
@@ -26,11 +31,26 @@ export async function POST() {
     }
 
     const stripe = getStripe()
-    const { successUrl } = getReturnUrls()
+    let returnContext: 'web' | 'mobile' = 'web'
+    const rawBody = await req.text()
+    if (rawBody) {
+      try {
+        const parsed = requestSchema.safeParse(JSON.parse(rawBody))
+        if (parsed.success) {
+          returnContext = parsed.data.returnContext
+        }
+      } catch {
+        // Ignore malformed body and keep the default web return context.
+      }
+    }
+
+    const returnUrl = returnContext === 'mobile'
+      ? 'kinexfit://subscription/manage-return'
+      : getReturnUrls().successUrl
 
     const portalSession = await stripe.billingPortal.sessions.create({
       customer: user.stripeCustomerId,
-      return_url: successUrl,
+      return_url: returnUrl,
     })
 
     return NextResponse.json({ url: portalSession.url })

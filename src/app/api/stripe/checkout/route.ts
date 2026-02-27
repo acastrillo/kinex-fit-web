@@ -18,6 +18,7 @@ export const runtime = 'nodejs'
 const requestSchema = z.object({
   tier: z.enum(['core', 'pro', 'elite']),
   billingPeriod: z.enum(['monthly', 'annual']).optional().default('monthly'),
+  returnContext: z.enum(['web', 'mobile']).optional().default('web'),
 })
 
 export async function POST(req: NextRequest) {
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
 
     const tier = assertPaidTier(parsed.data.tier)
     const billingPeriod = parsed.data.billingPeriod
+    const returnContext = parsed.data.returnContext
     const stripe = getStripe()
 
     const user = await dynamoDBUsers.get(userId)
@@ -91,7 +93,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Price ID not configured for this tier' }, { status: 500 })
     }
 
-    const { successUrl, cancelUrl } = getReturnUrls()
+    const { successUrl, cancelUrl } = returnContext === 'mobile'
+      ? getMobileReturnUrls(tier, billingPeriod)
+      : getReturnUrls()
     const metadata = buildMetadata(userId, tier)
     const idempotencyKey = req.headers.get('Idempotency-Key') || randomUUID()
 
@@ -129,5 +133,13 @@ export async function POST(req: NextRequest) {
       { error: 'Failed to create checkout session' },
       { status: 500 }
     )
+  }
+}
+
+function getMobileReturnUrls(tier: 'core' | 'pro' | 'elite', billingPeriod: 'monthly' | 'annual') {
+  const baseParams = `tier=${tier}&billingPeriod=${billingPeriod}`
+  return {
+    successUrl: `kinexfit://subscription/success?${baseParams}&session_id={CHECKOUT_SESSION_ID}`,
+    cancelUrl: `kinexfit://subscription/cancel?${baseParams}`,
   }
 }
