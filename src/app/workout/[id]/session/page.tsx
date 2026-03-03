@@ -1,14 +1,11 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { useAuthStore } from "@/store"
 import { Login } from "@/components/auth/login"
 import { Header } from "@/components/layout/header"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Progress } from "@/components/ui/progress"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -22,13 +19,14 @@ import {
 } from "@/components/ui/dialog"
 import {
   CheckCircle2,
-  Clock,
+  Circle,
+  Clock3,
   Loader2,
   Pause,
-  Pencil,
   Play,
-  Timer,
+  SlidersHorizontal,
   Trophy,
+  Zap,
   X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -82,12 +80,127 @@ interface Workout {
   }>
   totalDuration: number
   difficulty: string
+  timerConfig?: {
+    params?: Record<string, unknown>
+    aiGenerated?: boolean
+    reason?: string
+  } | null
 }
 
 interface CompletionHistoryResponse {
   completions?: Array<{
     exerciseMetrics?: WorkoutExerciseMetric[] | null
   }>
+}
+
+type SessionTimerType = "standard" | "interval" | "hiit"
+type SessionIntervalPhase = "work" | "rest" | "completed"
+
+interface SessionTimerConfiguration {
+  type: SessionTimerType
+  workSeconds: number
+  restSeconds: number
+  rounds: number
+}
+
+const DEFAULT_SESSION_TIMER_CONFIGURATION: SessionTimerConfiguration = {
+  type: "standard",
+  workSeconds: 40,
+  restSeconds: 20,
+  rounds: 8,
+}
+
+const TIMER_TYPE_OPTIONS: Array<{
+  type: SessionTimerType
+  label: string
+  description: string
+}> = [
+  { type: "standard", label: "Standard", description: "Simple count-up timer." },
+  {
+    type: "interval",
+    label: "Interval",
+    description: "Work/rest intervals across rounds.",
+  },
+  { type: "hiit", label: "HIIT", description: "Short high-intensity rounds." },
+]
+
+function clampSessionTimerConfiguration(
+  config: SessionTimerConfiguration
+): SessionTimerConfiguration {
+  const clampedWork = Math.max(5, Math.min(600, Math.round(config.workSeconds)))
+  const clampedRest = Math.max(0, Math.min(600, Math.round(config.restSeconds)))
+  const clampedRounds = Math.max(1, Math.min(50, Math.round(config.rounds)))
+
+  return {
+    type: config.type,
+    workSeconds: clampedWork,
+    restSeconds: clampedRest,
+    rounds: clampedRounds,
+  }
+}
+
+function usesCountdownTimer(config: SessionTimerConfiguration): boolean {
+  return config.type !== "standard"
+}
+
+function timerTypeLabel(type: SessionTimerType): string {
+  if (type === "interval") return "Interval"
+  if (type === "hiit") return "HIIT"
+  return "Standard"
+}
+
+function parseSessionTimerConfiguration(
+  timerParams: Record<string, unknown> | undefined
+): SessionTimerConfiguration {
+  if (!timerParams || typeof timerParams.kind !== "string") {
+    return DEFAULT_SESSION_TIMER_CONFIGURATION
+  }
+
+  if (timerParams.kind === "INTERVAL_WORK_REST") {
+    const workSeconds = Number(timerParams.workSeconds)
+    const restSeconds = Number(timerParams.restSeconds)
+    const rounds = Number(timerParams.totalRounds)
+
+    return clampSessionTimerConfiguration({
+      type: "interval",
+      workSeconds: Number.isFinite(workSeconds) ? workSeconds : 40,
+      restSeconds: Number.isFinite(restSeconds) ? restSeconds : 20,
+      rounds: Number.isFinite(rounds) ? rounds : 10,
+    })
+  }
+
+  if (timerParams.kind === "TABATA") {
+    const workSeconds = Number(timerParams.workSeconds)
+    const restSeconds = Number(timerParams.restSeconds)
+    const rounds = Number(timerParams.rounds)
+
+    return clampSessionTimerConfiguration({
+      type: "hiit",
+      workSeconds: Number.isFinite(workSeconds) ? workSeconds : 20,
+      restSeconds: Number.isFinite(restSeconds) ? restSeconds : 10,
+      rounds: Number.isFinite(rounds) ? rounds : 8,
+    })
+  }
+
+  return DEFAULT_SESSION_TIMER_CONFIGURATION
+}
+
+function timerStatusTag(
+  timerType: SessionTimerType,
+  intervalPhase: SessionIntervalPhase,
+  intervalRound: number,
+  rounds: number
+): string {
+  if (timerType === "standard") {
+    return "Standard count-up timer"
+  }
+
+  if (intervalPhase === "completed") {
+    return `${timerTypeLabel(timerType)} timer complete`
+  }
+
+  const phaseLabel = intervalPhase === "work" ? "Work" : "Rest"
+  return `${phaseLabel} • Round ${Math.min(intervalRound, rounds)}/${rounds}`
 }
 
 const RUN_EXERCISE_PATTERN = /\b(run|running|jog|jogging|sprint|mile|miles|km|kilometer|kilometre|5k|10k)\b/i
@@ -126,7 +239,7 @@ function formatDuration(seconds: number): string {
     return `${hrs}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
   }
 
-  return `${mins}:${secs.toString().padStart(2, "0")}`
+  return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
 }
 
 function formatDistance(distance: number, unit: DistanceUnit = "m"): string {
@@ -182,6 +295,26 @@ function flattenExercisesToCards(exercises: Exercise[]): WorkoutCard[] {
   }
 
   return cards
+}
+
+function workoutSessionSubtitle(workout: Workout): string {
+  const roundMatch = `${workout.title} ${workout.description}`.match(/(\d+)\s*rounds?/i)
+  const rounds = roundMatch ? Number.parseInt(roundMatch[1], 10) : null
+  const exerciseCount = workout.exercises.length
+
+  if (rounds && Number.isFinite(rounds) && rounds > 0 && exerciseCount > 0) {
+    return `${rounds} rounds of ${exerciseCount} exercises.`
+  }
+
+  if (workout.description.trim().length > 0) {
+    return workout.description
+  }
+
+  if (exerciseCount > 0) {
+    return `${exerciseCount} exercises.`
+  }
+
+  return ""
 }
 
 function createInitialMetrics(cards: WorkoutCard[]): Record<string, WorkoutExerciseMetric> {
@@ -333,6 +466,18 @@ export default function WorkoutSessionPage() {
   const [loading, setLoading] = useState(true)
   const [sessionDuration, setSessionDuration] = useState(0)
   const [isPaused, setIsPaused] = useState(false)
+  const [timerConfiguration, setTimerConfiguration] = useState<SessionTimerConfiguration>(
+    DEFAULT_SESSION_TIMER_CONFIGURATION
+  )
+  const [draftTimerConfiguration, setDraftTimerConfiguration] = useState<SessionTimerConfiguration>(
+    DEFAULT_SESSION_TIMER_CONFIGURATION
+  )
+  const [intervalPhase, setIntervalPhase] = useState<SessionIntervalPhase>("completed")
+  const [intervalRound, setIntervalRound] = useState(1)
+  const [intervalPhaseRemainingSeconds, setIntervalPhaseRemainingSeconds] = useState(0)
+  const [intervalElapsedSeconds, setIntervalElapsedSeconds] = useState(0)
+  const [showTimerSelectionDialog, setShowTimerSelectionDialog] = useState(false)
+  const [, setDidPresentAutoCompletion] = useState(false)
 
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
   const [showMetricDialog, setShowMetricDialog] = useState(false)
@@ -347,38 +492,110 @@ export default function WorkoutSessionPage() {
 
   const sessionIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const isPausedRef = useRef(false)
+  const timerConfigurationRef = useRef<SessionTimerConfiguration>(DEFAULT_SESSION_TIMER_CONFIGURATION)
+  const intervalPhaseRef = useRef<SessionIntervalPhase>("completed")
+  const intervalRoundRef = useRef(1)
+  const intervalPhaseRemainingSecondsRef = useRef(0)
+  const intervalElapsedSecondsRef = useRef(0)
 
-  useEffect(() => {
-    isPausedRef.current = isPaused
-  }, [isPaused])
+  const resetIntervalState = useCallback((configuration: SessionTimerConfiguration) => {
+    if (!usesCountdownTimer(configuration)) {
+      intervalPhaseRef.current = "completed"
+      intervalRoundRef.current = 1
+      intervalPhaseRemainingSecondsRef.current = 0
+      intervalElapsedSecondsRef.current = 0
+      setIntervalPhase("completed")
+      setIntervalRound(1)
+      setIntervalPhaseRemainingSeconds(0)
+      setIntervalElapsedSeconds(0)
+      return
+    }
 
-  useEffect(() => {
-    const workoutId = params?.id as string
-    if (!workoutId || !user?.id) return
+    intervalPhaseRef.current = "work"
+    intervalRoundRef.current = 1
+    intervalPhaseRemainingSecondsRef.current = configuration.workSeconds
+    intervalElapsedSecondsRef.current = 0
+    setIntervalPhase("work")
+    setIntervalRound(1)
+    setIntervalPhaseRemainingSeconds(configuration.workSeconds)
+    setIntervalElapsedSeconds(0)
+  }, [])
 
-    loadWorkout(workoutId)
+  const finishCountdownTimer = useCallback(() => {
+    intervalPhaseRef.current = "completed"
+    intervalPhaseRemainingSecondsRef.current = 0
+    setIntervalPhase("completed")
+    setIntervalPhaseRemainingSeconds(0)
 
-    if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current)
+    setDidPresentAutoCompletion((alreadyPresented) => {
+      if (alreadyPresented) return alreadyPresented
+      setIsPaused(true)
+      setShowCompletionDialog(true)
+      return true
+    })
+  }, [])
 
-    sessionIntervalRef.current = setInterval(() => {
-      if (!isPausedRef.current) {
-        setSessionDuration(prev => prev + 1)
+  const advanceIntervalPhase = useCallback(() => {
+    const configuration = timerConfigurationRef.current
+
+    if (!usesCountdownTimer(configuration)) {
+      return
+    }
+
+    if (intervalPhaseRef.current === "work") {
+      const hasAnotherRound = intervalRoundRef.current < configuration.rounds
+
+      if (!hasAnotherRound) {
+        finishCountdownTimer()
+        return
       }
-    }, 1000)
 
-    return () => {
-      if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current)
+      if (configuration.restSeconds > 0) {
+        intervalPhaseRef.current = "rest"
+        intervalPhaseRemainingSecondsRef.current = configuration.restSeconds
+        setIntervalPhase("rest")
+        setIntervalPhaseRemainingSeconds(configuration.restSeconds)
+        return
+      }
+
+      intervalRoundRef.current += 1
+      intervalPhaseRef.current = "work"
+      intervalPhaseRemainingSecondsRef.current = configuration.workSeconds
+      setIntervalRound(intervalRoundRef.current)
+      setIntervalPhase("work")
+      setIntervalPhaseRemainingSeconds(configuration.workSeconds)
+      return
     }
-  }, [params?.id, user?.id])
 
-  useEffect(() => {
-    if (!showCompletionDialog) {
-      setIsSaving(false)
-      setSaveSuccess(false)
+    if (intervalPhaseRef.current === "rest") {
+      const hasAnotherRound = intervalRoundRef.current < configuration.rounds
+
+      if (!hasAnotherRound) {
+        finishCountdownTimer()
+        return
+      }
+
+      intervalRoundRef.current += 1
+      intervalPhaseRef.current = "work"
+      intervalPhaseRemainingSecondsRef.current = configuration.workSeconds
+      setIntervalRound(intervalRoundRef.current)
+      setIntervalPhase("work")
+      setIntervalPhaseRemainingSeconds(configuration.workSeconds)
     }
-  }, [showCompletionDialog])
+  }, [finishCountdownTimer])
 
-  const loadWorkout = async (workoutId: string) => {
+  const applyTimerConfiguration = useCallback(
+    (configuration: SessionTimerConfiguration) => {
+      const normalized = clampSessionTimerConfiguration(configuration)
+      timerConfigurationRef.current = normalized
+      setTimerConfiguration(normalized)
+      resetIntervalState(normalized)
+      setDidPresentAutoCompletion(false)
+    },
+    [resetIntervalState]
+  )
+
+  const loadWorkout = useCallback(async (workoutId: string) => {
     setLoading(true)
 
     try {
@@ -394,12 +611,16 @@ export default function WorkoutSessionPage() {
           amrapBlocks: dbWorkout.amrapBlocks || [],
           totalDuration: dbWorkout.totalDuration || 0,
           difficulty: dbWorkout.difficulty || "medium",
+          timerConfig: dbWorkout.timerConfig || null,
         }
 
         const cards = flattenExercisesToCards(transformedWorkout.exercises)
         setWorkout(transformedWorkout)
         setWorkoutCards(cards)
         setExerciseMetrics(createInitialMetrics(cards))
+        applyTimerConfiguration(
+          parseSessionTimerConfiguration(transformedWorkout.timerConfig?.params)
+        )
       } else {
         const workouts = JSON.parse(localStorage.getItem("workouts") || "[]")
         const found = workouts.find((w: Workout) => w.id === workoutId)
@@ -409,6 +630,7 @@ export default function WorkoutSessionPage() {
           setWorkout(found)
           setWorkoutCards(cards)
           setExerciseMetrics(createInitialMetrics(cards))
+          applyTimerConfiguration(parseSessionTimerConfiguration(found.timerConfig?.params))
         } else {
           setWorkout(null)
           setWorkoutCards([])
@@ -425,6 +647,7 @@ export default function WorkoutSessionPage() {
         setWorkout(found)
         setWorkoutCards(cards)
         setExerciseMetrics(createInitialMetrics(cards))
+        applyTimerConfiguration(parseSessionTimerConfiguration(found.timerConfig?.params))
       } else {
         setWorkout(null)
         setWorkoutCards([])
@@ -433,7 +656,60 @@ export default function WorkoutSessionPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [applyTimerConfiguration])
+
+  useEffect(() => {
+    isPausedRef.current = isPaused
+  }, [isPaused])
+
+  useEffect(() => {
+    const workoutId = params?.id as string
+    if (!workoutId || !user?.id) return
+
+    setSessionDuration(0)
+    setIsPaused(false)
+    setDidPresentAutoCompletion(false)
+    loadWorkout(workoutId)
+
+    if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current)
+
+    sessionIntervalRef.current = setInterval(() => {
+      if (isPausedRef.current) return
+
+      setSessionDuration(prev => prev + 1)
+
+      if (!usesCountdownTimer(timerConfigurationRef.current)) return
+      if (intervalPhaseRef.current === "completed") return
+
+      if (intervalPhaseRemainingSecondsRef.current > 0) {
+        intervalPhaseRemainingSecondsRef.current -= 1
+        intervalElapsedSecondsRef.current += 1
+        setIntervalPhaseRemainingSeconds(intervalPhaseRemainingSecondsRef.current)
+        setIntervalElapsedSeconds(intervalElapsedSecondsRef.current)
+      }
+
+      if (intervalPhaseRemainingSecondsRef.current === 0) {
+        advanceIntervalPhase()
+      }
+    }, 1000)
+
+    return () => {
+      if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current)
+    }
+  }, [advanceIntervalPhase, loadWorkout, params?.id, user?.id])
+
+  useEffect(() => {
+    if (showTimerSelectionDialog) {
+      setDraftTimerConfiguration(timerConfiguration)
+    }
+  }, [showTimerSelectionDialog, timerConfiguration])
+
+  useEffect(() => {
+    if (!showCompletionDialog) {
+      setIsSaving(false)
+      setSaveSuccess(false)
+    }
+  }, [showCompletionDialog])
 
   const completedCount = useMemo(
     () => Object.values(exerciseMetrics).filter(metric => metric.completed).length,
@@ -448,6 +724,32 @@ export default function WorkoutSessionPage() {
   )
 
   const selectedMetric = selectedCard ? exerciseMetrics[selectedCard.id] : null
+  const workoutSubtitle = workout ? workoutSessionSubtitle(workout) : ""
+  const timerUsesCountdown = usesCountdownTimer(timerConfiguration)
+  const displayedTimerSeconds = timerUsesCountdown
+    ? Math.max(intervalPhaseRemainingSeconds, 0)
+    : sessionDuration
+  const timerStatusText = timerStatusTag(
+    timerConfiguration.type,
+    intervalPhase,
+    intervalRound,
+    timerConfiguration.rounds
+  )
+  const totalCountdownSeconds = timerUsesCountdown
+    ? (timerConfiguration.workSeconds * timerConfiguration.rounds) +
+      (timerConfiguration.restSeconds * Math.max(timerConfiguration.rounds - 1, 0))
+    : 0
+  const countdownProgress = timerUsesCountdown && totalCountdownSeconds > 0
+    ? Math.min(1, Math.max(0, intervalElapsedSeconds / totalCountdownSeconds))
+    : 0
+  const timerSelectionLabel = timerUsesCountdown
+    ? `${timerTypeLabel(timerConfiguration.type)} • ${timerConfiguration.rounds} rounds (${timerConfiguration.workSeconds}s/${timerConfiguration.restSeconds}s)`
+    : "Standard"
+
+  const applyDraftTimerConfiguration = () => {
+    applyTimerConfiguration(draftTimerConfiguration)
+    setShowTimerSelectionDialog(false)
+  }
 
   const updateMetric = (cardId: string, updates: Partial<WorkoutExerciseMetric>) => {
     setExerciseMetrics(prev => ({
@@ -615,63 +917,154 @@ export default function WorkoutSessionPage() {
     )
   }
 
+  const TimerDisplayIcon =
+    timerConfiguration.type === "hiit"
+      ? Zap
+      : timerConfiguration.type === "interval"
+      ? SlidersHorizontal
+      : Clock3
+
   return (
     <>
       <Header />
       <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 pb-28">
-        <div className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-sm border-b border-slate-800 px-4 py-3">
-          <div className="max-w-4xl mx-auto space-y-3">
+        <div className="sticky top-0 z-30 border-b border-slate-800 bg-slate-900/95 backdrop-blur-sm">
+          <div className="mx-auto max-w-4xl space-y-3 px-4 py-3">
             <div className="flex items-center justify-between gap-3">
-              <Button
-                variant="ghost"
-                size="sm"
+              <button
+                type="button"
                 onClick={() => setShowEndDialog(true)}
-                className="text-text-secondary hover:text-white"
+                className="inline-flex items-center gap-2 text-sm font-semibold text-text-secondary transition-colors hover:text-white"
               >
-                <X className="h-5 w-5 mr-2" />
-                End Workout
-              </Button>
+                <X className="h-4 w-4" />
+                End
+              </button>
 
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2 text-white">
-                  <Clock className="h-4 w-4" />
-                  <span className="font-mono tabular-nums">{formatDuration(sessionDuration)}</span>
+              <div className="flex items-center gap-2">
+                <div className="inline-flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-800/70 px-3 py-1.5 text-white">
+                  <TimerDisplayIcon className="h-4 w-4" />
+                  <span className="font-mono text-[1.9rem] leading-none tabular-nums md:text-base">
+                    {formatDuration(displayedTimerSeconds)}
+                  </span>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
+
+                <button
+                  type="button"
+                  onClick={() => setShowTimerSelectionDialog(true)}
+                  className="inline-flex items-center justify-center rounded-2xl border border-slate-700 bg-slate-800/70 px-3 py-2 text-text-secondary transition-colors hover:text-white"
+                  aria-label="Adjust Timer"
+                >
+                  <SlidersHorizontal className="h-4 w-4" />
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => setIsPaused(prev => !prev)}
-                  className="min-w-[110px]"
+                  className={cn(
+                    "inline-flex min-w-[112px] items-center justify-center gap-2 rounded-2xl border border-slate-700 bg-slate-800/70 px-3 py-2 text-sm font-semibold transition-colors",
+                    isPaused ? "text-primary hover:text-primary/90" : "text-text-secondary hover:text-white"
+                  )}
                 >
                   {isPaused ? (
                     <>
-                      <Play className="h-4 w-4 mr-2" />
+                      <Play className="h-4 w-4" />
                       Resume
                     </>
                   ) : (
                     <>
-                      <Pause className="h-4 w-4 mr-2" />
+                      <Pause className="h-4 w-4" />
                       Pause
                     </>
                   )}
-                </Button>
+                </button>
               </div>
             </div>
 
-            <div className="flex items-center justify-between text-xs text-text-secondary">
-              <span>{completedCount}/{workoutCards.length} moves completed</span>
-              {isPaused && <span className="text-amber-400">Timer paused</span>}
+            <div className="flex items-center justify-between text-xs">
+              <div className="space-y-0.5">
+                <div className="font-medium text-text-secondary">
+                  {completedCount}/{workoutCards.length} moves completed
+                </div>
+                <div className="text-text-tertiary">{timerStatusText}</div>
+              </div>
+              {timerUsesCountdown && intervalPhase === "completed" ? (
+                <span className="font-semibold text-green-400">Complete</span>
+              ) : isPaused ? (
+                <span className="font-semibold text-amber-400">Paused</span>
+              ) : null}
             </div>
 
-            <Progress value={progress} className="h-1.5" />
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800/95">
+              <div
+                className="h-full rounded-full bg-primary transition-all duration-300 ease-in-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
           </div>
         </div>
 
-        <div className="max-w-4xl mx-auto px-4 py-6">
-          <div className="mb-5">
+        <div className="mx-auto max-w-4xl px-4 py-6">
+          <div className="mb-5 space-y-1">
             <h1 className="text-2xl font-bold text-white">{workout.title}</h1>
-            {workout.description && (
-              <p className="text-text-secondary mt-1">{workout.description}</p>
+            {workoutSubtitle && (
+              <p className="text-[15px] text-text-secondary">{workoutSubtitle}</p>
+            )}
+          </div>
+
+          <div className="mb-4 rounded-2xl border border-slate-700 bg-slate-900/75 p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="inline-flex items-center gap-2">
+                <TimerDisplayIcon className="h-4 w-4 text-primary" />
+                <span className="text-lg font-semibold text-white">
+                  {timerTypeLabel(timerConfiguration.type)}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTimerSelectionDialog(true)}
+                className="rounded-full bg-primary/20 px-4 py-1.5 text-sm font-semibold text-primary transition-colors hover:bg-primary/30"
+              >
+                Adjust
+              </button>
+            </div>
+
+            <div className="mb-2 flex items-end gap-2">
+              <span className="font-mono text-5xl font-bold leading-none text-white">
+                {formatDuration(displayedTimerSeconds)}
+              </span>
+              <span className="pb-1 text-sm font-semibold text-text-secondary">
+                {timerUsesCountdown ? "remaining" : "elapsed"}
+              </span>
+            </div>
+
+            {timerUsesCountdown && (
+              <>
+                <div className="mb-3 flex items-center gap-2">
+                  <span
+                    className={cn(
+                      "rounded-full px-3 py-1 text-xs font-semibold",
+                      intervalPhase === "rest"
+                        ? "bg-amber-500/20 text-amber-300"
+                        : "bg-primary/20 text-primary"
+                    )}
+                  >
+                    {intervalPhase === "completed"
+                      ? "Complete"
+                      : intervalPhase === "rest"
+                      ? "Rest"
+                      : "Work"}
+                  </span>
+                  <span className="text-xs font-semibold text-text-secondary">
+                    Round {Math.min(intervalRound, timerConfiguration.rounds)}/{timerConfiguration.rounds}
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800/95">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all duration-300 ease-in-out"
+                    style={{ width: `${countdownProgress * 100}%` }}
+                  />
+                </div>
+              </>
             )}
           </div>
 
@@ -686,117 +1079,250 @@ export default function WorkoutSessionPage() {
                 : Boolean((metric.reps && metric.reps > 0) || (metric.weight && metric.weight > 0))
 
               return (
-                <Card
+                <div
                   key={card.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => openMetricDialog(card.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault()
+                      openMetricDialog(card.id)
+                    }
+                  }}
                   className={cn(
-                    "cursor-pointer transition-all border",
+                    "w-full rounded-3xl border p-4 text-left transition-colors",
                     metric.completed
-                      ? "border-green-500/50 bg-green-500/5"
-                      : "border-slate-700 bg-slate-900/60 hover:border-primary/60"
+                      ? "border-green-500/35 bg-green-500/[0.04]"
+                      : "border-slate-700 bg-slate-900/75 hover:border-primary/60"
                   )}
                 >
-                  <CardContent className="pt-4 pb-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="space-y-2 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/15 text-primary text-sm font-semibold">
-                            {card.exerciseNumber}
-                          </div>
-                          <h2 className="text-lg font-semibold text-white capitalize truncate">
-                            {card.exerciseName}
-                          </h2>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 space-y-2">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/15 text-xl font-bold text-primary">
+                          {card.exerciseNumber}
                         </div>
-
-                        <div className="flex flex-wrap items-center gap-2 text-xs">
-                          <Badge variant="secondary" className="bg-slate-800 text-slate-200 border-slate-700">
-                            Round {metric.roundCompleted ?? card.setNumber} of {metric.roundTotal ?? card.totalSets}
-                          </Badge>
-                          {metric.isRun ? (
-                            <Badge variant="outline" className="border-blue-500/50 text-blue-300">
-                              Run
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="border-slate-600 text-slate-300">
-                              Target: {card.reps || "-"} reps {card.weight ? `@ ${card.weight}` : ""}
-                            </Badge>
-                          )}
-                        </div>
-
-                        <div className="text-sm text-text-secondary">
-                          {metric.isRun ? (
-                            <>
-                              {metric.distance && metric.distance > 0 ? (
-                                <span>{formatDistance(metric.distance, metric.distanceUnit || "m")}</span>
-                              ) : (
-                                <span>No distance logged yet</span>
-                              )}
-                              {metric.timeSeconds && metric.timeSeconds > 0 && (
-                                <span> · {formatDuration(metric.timeSeconds)}</span>
-                              )}
-                            </>
-                          ) : hasLoggedMetrics ? (
-                            <>
-                              {metric.reps && metric.reps > 0 ? `${metric.reps} reps` : "No reps logged"}
-                              {metric.weight && metric.weight > 0
-                                ? ` @ ${metric.weight} ${metric.weightUnit || "lbs"}`
-                                : ""}
-                            </>
-                          ) : (
-                            <span>No metrics logged yet</span>
-                          )}
-                        </div>
+                        <h2 className="truncate text-2xl font-semibold capitalize text-white md:text-lg">
+                          {card.exerciseName}
+                        </h2>
                       </div>
 
-                      <div className="flex flex-col items-end gap-2">
-                        <Button
-                          variant={metric.completed ? "secondary" : "outline"}
-                          size="sm"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            toggleComplete(card.id)
-                          }}
-                          className={cn(
-                            "min-w-[120px]",
-                            metric.completed && "bg-green-500/20 text-green-200 border-green-500/40 hover:bg-green-500/30"
-                          )}
-                        >
-                          <CheckCircle2 className="h-4 w-4 mr-2" />
-                          {metric.completed ? "Completed" : "Mark Complete"}
-                        </Button>
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="rounded-full bg-slate-800/95 px-3 py-1 text-base font-medium text-text-secondary md:text-xs">
+                          Set {metric.roundCompleted ?? card.setNumber} of {metric.roundTotal ?? card.totalSets}
+                        </span>
+                        {metric.isRun ? (
+                          <span className="rounded-full bg-blue-500/10 px-3 py-1 text-base font-medium text-blue-300 md:text-xs">
+                            Run
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-slate-800/95 px-3 py-1 text-base font-medium text-text-secondary md:text-xs">
+                            Target: {card.reps || "-"} reps{card.weight ? ` @ ${card.weight}` : ""}
+                          </span>
+                        )}
+                      </div>
 
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            openMetricDialog(card.id)
-                          }}
-                          className="text-text-secondary hover:text-white"
-                        >
-                          <Pencil className="h-4 w-4 mr-2" />
-                          Log Metrics
-                        </Button>
+                      <div className="text-base text-text-tertiary md:text-sm">
+                        {metric.isRun ? (
+                          <>
+                            {metric.distance && metric.distance > 0 ? (
+                              <span>{formatDistance(metric.distance, metric.distanceUnit || "m")}</span>
+                            ) : (
+                              <span>Tap to log distance & time</span>
+                            )}
+                            {metric.timeSeconds && metric.timeSeconds > 0 && (
+                              <span> · {formatDuration(metric.timeSeconds)}</span>
+                            )}
+                          </>
+                        ) : hasLoggedMetrics ? (
+                          <>
+                            {metric.reps && metric.reps > 0 ? `${metric.reps} reps` : "No reps logged"}
+                            {metric.weight && metric.weight > 0
+                              ? ` @ ${metric.weight} ${metric.weightUnit || "lbs"}`
+                              : ""}
+                          </>
+                        ) : (
+                          <span>Tap to log reps & weight</span>
+                        )}
                       </div>
                     </div>
-                  </CardContent>
-                </Card>
+
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        toggleComplete(card.id)
+                      }}
+                      className={cn(
+                        "inline-flex min-w-[132px] items-center justify-center gap-2 rounded-full px-4 py-2 text-2xl font-semibold transition-colors md:text-sm",
+                        metric.completed
+                          ? "border border-green-500/40 bg-green-500/15 text-green-300 hover:bg-green-500/20"
+                          : "bg-slate-800/90 text-text-secondary hover:text-white"
+                      )}
+                    >
+                      {metric.completed ? (
+                        <CheckCircle2 className="h-5 w-5 md:h-4 md:w-4" />
+                      ) : (
+                        <Circle className="h-5 w-5 md:h-4 md:w-4" />
+                      )}
+                      {metric.completed ? "Done" : "Complete"}
+                    </button>
+                  </div>
+                </div>
               )
             })}
           </div>
 
           <div className="mt-8">
             <Button
-              className="w-full h-12 text-base"
+              className="h-12 w-full bg-gradient-to-r from-primary to-[#ff8036] text-base shadow-[0_12px_30px_rgba(255,107,53,0.35)]"
               onClick={() => setShowCompletionDialog(true)}
               disabled={isSaving}
             >
-              <Timer className="h-5 w-5 mr-2" />
+              <CheckCircle2 className="mr-2 h-5 w-5" />
               Finish & Save Workout
             </Button>
           </div>
         </div>
       </main>
+
+      <Dialog open={showTimerSelectionDialog} onOpenChange={setShowTimerSelectionDialog}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Session Timer</DialogTitle>
+            <DialogDescription>
+              Choose the timer that matches this session.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-1">
+            <div className="grid gap-2 sm:grid-cols-3">
+              {TIMER_TYPE_OPTIONS.map((option) => (
+                <button
+                  key={option.type}
+                  type="button"
+                  onClick={() => {
+                    setDraftTimerConfiguration((previous) => {
+                      if (option.type === "standard") {
+                        return clampSessionTimerConfiguration({
+                          ...previous,
+                          type: "standard",
+                        })
+                      }
+
+                      if (option.type === "hiit") {
+                        return clampSessionTimerConfiguration({
+                          ...previous,
+                          type: "hiit",
+                          workSeconds: previous.type === "standard" ? 20 : previous.workSeconds,
+                          restSeconds: previous.type === "standard" ? 10 : previous.restSeconds,
+                          rounds: previous.type === "standard" ? 8 : previous.rounds,
+                        })
+                      }
+
+                      return clampSessionTimerConfiguration({
+                        ...previous,
+                        type: "interval",
+                        workSeconds: previous.type === "standard" ? 40 : previous.workSeconds,
+                        restSeconds: previous.type === "standard" ? 20 : previous.restSeconds,
+                        rounds: previous.type === "standard" ? 10 : previous.rounds,
+                      })
+                    })
+                  }}
+                  className={cn(
+                    "rounded-xl border px-3 py-2 text-left transition-colors",
+                    draftTimerConfiguration.type === option.type
+                      ? "border-primary bg-primary/10"
+                      : "border-border bg-surface/40 hover:border-primary/50"
+                  )}
+                >
+                  <div className="text-sm font-semibold text-white">{option.label}</div>
+                  <div className="mt-1 text-xs text-text-secondary">{option.description}</div>
+                </button>
+              ))}
+            </div>
+
+            {draftTimerConfiguration.type !== "standard" && (
+              <div className="grid gap-3 rounded-xl border border-border bg-surface/40 p-3 sm:grid-cols-3">
+                <div className="space-y-1">
+                  <Label htmlFor="timer-work-seconds">Work (sec)</Label>
+                  <Input
+                    id="timer-work-seconds"
+                    type="number"
+                    min={5}
+                    max={600}
+                    value={draftTimerConfiguration.workSeconds}
+                    onChange={(event) => {
+                      const next = Number.parseInt(event.target.value || "0", 10)
+                      if (!Number.isFinite(next)) return
+                      setDraftTimerConfiguration((previous) =>
+                        clampSessionTimerConfiguration({
+                          ...previous,
+                          workSeconds: next,
+                        })
+                      )
+                    }}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="timer-rest-seconds">Rest (sec)</Label>
+                  <Input
+                    id="timer-rest-seconds"
+                    type="number"
+                    min={0}
+                    max={600}
+                    value={draftTimerConfiguration.restSeconds}
+                    onChange={(event) => {
+                      const next = Number.parseInt(event.target.value || "0", 10)
+                      if (!Number.isFinite(next)) return
+                      setDraftTimerConfiguration((previous) =>
+                        clampSessionTimerConfiguration({
+                          ...previous,
+                          restSeconds: next,
+                        })
+                      )
+                    }}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="timer-rounds">Rounds</Label>
+                  <Input
+                    id="timer-rounds"
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={draftTimerConfiguration.rounds}
+                    onChange={(event) => {
+                      const next = Number.parseInt(event.target.value || "0", 10)
+                      if (!Number.isFinite(next)) return
+                      setDraftTimerConfiguration((previous) =>
+                        clampSessionTimerConfiguration({
+                          ...previous,
+                          rounds: next,
+                        })
+                      )
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button
+              variant="outline"
+              onClick={() => setShowTimerSelectionDialog(false)}
+              className="w-full sm:w-auto"
+            >
+              Cancel
+            </Button>
+            <Button onClick={applyDraftTimerConfiguration} className="w-full sm:w-auto">
+              Apply
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showMetricDialog} onOpenChange={setShowMetricDialog}>
         <DialogContent className="sm:max-w-lg">
@@ -1064,6 +1590,10 @@ export default function WorkoutSessionPage() {
                 <div className="flex items-center justify-between rounded-lg bg-surface px-3 py-2 text-sm">
                   <span className="text-text-secondary">Duration</span>
                   <span className="font-medium">{formatDuration(sessionDuration)}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg bg-surface px-3 py-2 text-sm">
+                  <span className="text-text-secondary">Timer</span>
+                  <span className="max-w-[70%] truncate text-right font-medium">{timerSelectionLabel}</span>
                 </div>
 
                 <div>
