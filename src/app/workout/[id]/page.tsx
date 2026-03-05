@@ -270,6 +270,55 @@ export default function WorkoutViewPage() {
       )
     : []
 
+  // Parse rounds from title/description for set-major expansion
+  const parsedRounds = (() => {
+    const roundMatch = `${workout.title} ${workout.description}`.match(/(\d+)\s*rounds?/i)
+    if (roundMatch) {
+      const r = Number.parseInt(roundMatch[1], 10)
+      if (Number.isFinite(r) && r > 0) return r
+    }
+    return null
+  })()
+
+  // Build set-major expanded list for the exercise display:
+  // for block -> for set in 1..totalSets -> for move in moves
+  const expandedExerciseList = (() => {
+    const exercises = hasAmrapBlocks ? [] : workout.exercises
+    if (exercises.length === 0) return null
+
+    // Determine the max sets across exercises
+    const maxSets = Math.max(
+      ...exercises.map(ex => {
+        if (ex.setDetails && ex.setDetails.length > 0) return ex.setDetails.length
+        return ex.sets > 0 ? ex.sets : (parsedRounds || 1)
+      })
+    )
+
+    // Only show expanded view when there are multiple sets
+    if (maxSets <= 1) return null
+
+    const items: Array<{ exercise: Exercise; exerciseIndex: number; setNumber: number; totalSets: number }> = []
+
+    for (let setIdx = 0; setIdx < maxSets; setIdx++) {
+      exercises.forEach((exercise, exerciseIdx) => {
+        const numSets = exercise.setDetails && exercise.setDetails.length > 0
+          ? exercise.setDetails.length
+          : (exercise.sets > 0 ? exercise.sets : (parsedRounds || 1))
+
+        if (setIdx < numSets) {
+          items.push({
+            exercise,
+            exerciseIndex: exerciseIdx,
+            setNumber: setIdx + 1,
+            totalSets: numSets,
+          })
+        }
+      })
+    }
+
+    return items
+  })()
+
   const formatDuration = (minutes: number) => {
     if (minutes < 60) return `${minutes} min`
     const hours = Math.floor(minutes / 60)
@@ -532,6 +581,8 @@ export default function WorkoutViewPage() {
                     }`
                   : workout.workoutType === 'amrap'
                   ? `Exercise Circuit (${workout.exercises.length} movements)`
+                  : expandedExerciseList
+                  ? `Exercises (${workout.exercises.length} moves · ${expandedExerciseList[expandedExerciseList.length - 1]?.totalSets || 1} sets)`
                   : `Exercises (${workout.exercises.length})`}
               </CardTitle>
             </CardHeader>
@@ -591,6 +642,54 @@ export default function WorkoutViewPage() {
                       </div>
                     </div>
                   )}
+                </div>
+              ) : expandedExerciseList ? (
+                <div className="space-y-3">
+                  {expandedExerciseList.map((item, idx) => {
+                    const prevItem = idx > 0 ? expandedExerciseList[idx - 1] : null
+                    const showSetHeader = !prevItem || prevItem.setNumber !== item.setNumber
+                    const showRest = prevItem && prevItem.setNumber !== item.setNumber && item.exercise.restSeconds && item.exercise.restSeconds > 0
+
+                    return (
+                      <div key={`${item.exercise.id}-set-${item.setNumber}-${idx}`}>
+                        {showRest && (
+                          <div className="flex items-center gap-2 py-2 px-3 mb-2 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+                            <Clock className="h-3.5 w-3.5 text-emerald-400" />
+                            <span className="text-xs font-medium text-emerald-400">
+                              Rest {item.exercise.restSeconds}s
+                            </span>
+                          </div>
+                        )}
+                        {showSetHeader && (
+                          <div className="flex items-center gap-2 mb-2 mt-3">
+                            <div className="h-px flex-1 bg-border" />
+                            <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                              Set {item.setNumber} of {item.totalSets}
+                            </span>
+                            <div className="h-px flex-1 bg-border" />
+                          </div>
+                        )}
+                        <div className="rounded-lg border border-border bg-surface p-3 flex items-center gap-3">
+                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                            {item.exerciseIndex + 1}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <span className="font-medium text-text-primary capitalize text-sm">
+                              {item.exercise.name}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 text-sm text-text-secondary">
+                            {item.exercise.reps && (
+                              <span>{item.exercise.reps} reps</span>
+                            )}
+                            {item.exercise.weight && (
+                              <span>{item.exercise.weight}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               ) : (
                 <div className="space-y-4">

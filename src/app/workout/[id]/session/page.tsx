@@ -53,17 +53,18 @@ interface Exercise {
   }>
 }
 
+// One card per move — tracks set progress via tap
 interface WorkoutCard {
   id: string
   exerciseId: string
   exerciseName: string
   exerciseNumber: number
-  setNumber: number
   totalSets: number
   reps: string | number
   weight?: string
   restSeconds?: number
   notes?: string
+  isRun: boolean
 }
 
 interface Workout {
@@ -258,41 +259,30 @@ function normalizeExerciseName(name: string): string {
   return name.trim().toLowerCase()
 }
 
-function flattenExercisesToCards(exercises: Exercise[]): WorkoutCard[] {
+/**
+ * Build one card per move (not per set).
+ * Each card tracks its own set progress via tap-to-advance.
+ */
+function buildWorkoutCards(exercises: Exercise[], roundsFromDescription?: number | null): WorkoutCard[] {
   const cards: WorkoutCard[] = []
 
-  if (exercises.length === 0) return cards
+  exercises.forEach((exercise, idx) => {
+    const totalSets = exercise.sets > 0 ? exercise.sets : (roundsFromDescription && roundsFromDescription > 0 ? roundsFromDescription : 1)
+    const isRun = RUN_EXERCISE_PATTERN.test(`${exercise.name} ${exercise.notes || ""}`)
 
-  const maxSets = Math.max(
-    ...exercises.map(ex =>
-      ex.setDetails && ex.setDetails.length > 0 ? ex.setDetails.length : ex.sets
-    )
-  )
-
-  for (let setIdx = 0; setIdx < maxSets; setIdx++) {
-    exercises.forEach((exercise, exerciseIdx) => {
-      const numSets = exercise.setDetails && exercise.setDetails.length > 0
-        ? exercise.setDetails.length
-        : exercise.sets
-
-      if (setIdx < numSets) {
-        const setDetail = exercise.setDetails?.[setIdx]
-
-        cards.push({
-          id: `${exercise.id}-set-${setIdx + 1}`,
-          exerciseId: exercise.id,
-          exerciseName: exercise.name,
-          exerciseNumber: exerciseIdx + 1,
-          setNumber: setIdx + 1,
-          totalSets: numSets,
-          reps: setDetail?.reps || exercise.reps,
-          weight: setDetail?.weight || exercise.weight,
-          restSeconds: exercise.restSeconds,
-          notes: exercise.notes,
-        })
-      }
+    cards.push({
+      id: exercise.id,
+      exerciseId: exercise.id,
+      exerciseName: exercise.name,
+      exerciseNumber: idx + 1,
+      totalSets,
+      reps: exercise.reps,
+      weight: exercise.weight,
+      restSeconds: exercise.restSeconds,
+      notes: exercise.notes,
+      isRun,
     })
-  }
+  })
 
   return cards
 }
@@ -321,20 +311,19 @@ function createInitialMetrics(cards: WorkoutCard[]): Record<string, WorkoutExerc
   return cards.reduce<Record<string, WorkoutExerciseMetric>>((acc, card) => {
     const parsedWeight = parseFirstNumber(card.weight)
     const parsedReps = parseFirstNumber(card.reps)
-    const isRun = RUN_EXERCISE_PATTERN.test(`${card.exerciseName} ${card.notes || ""}`)
 
     acc[card.id] = {
       cardId: card.id,
       exerciseId: card.exerciseId,
       exerciseName: card.exerciseName,
       completed: false,
-      isRun,
+      isRun: card.isRun,
       targetReps: card.reps,
       targetWeight: card.weight || null,
-      roundCompleted: card.setNumber,
+      roundCompleted: 1,
       roundTotal: card.totalSets,
-      reps: !isRun && parsedReps !== null ? Math.round(parsedReps) : null,
-      weight: !isRun && parsedWeight !== null ? parsedWeight : null,
+      reps: !card.isRun && parsedReps !== null ? Math.round(parsedReps) : null,
+      weight: !card.isRun && parsedWeight !== null ? parsedWeight : null,
       weightUnit: parseWeightUnit(card.weight),
       distance: null,
       distanceUnit: "m",
@@ -483,6 +472,7 @@ export default function WorkoutSessionPage() {
   const [showMetricDialog, setShowMetricDialog] = useState(false)
 
   const [showCompletionDialog, setShowCompletionDialog] = useState(false)
+  const [showReadyToCompleteDialog, setShowReadyToCompleteDialog] = useState(false)
   const [showEndDialog, setShowEndDialog] = useState(false)
   const [workoutNotes, setWorkoutNotes] = useState("")
 
@@ -595,6 +585,15 @@ export default function WorkoutSessionPage() {
     [resetIntervalState]
   )
 
+  const parseRoundsFromDescription = useCallback((w: Workout): number | null => {
+    const roundMatch = `${w.title} ${w.description}`.match(/(\d+)\s*rounds?/i)
+    if (roundMatch) {
+      const rounds = Number.parseInt(roundMatch[1], 10)
+      if (Number.isFinite(rounds) && rounds > 0) return rounds
+    }
+    return null
+  }, [])
+
   const loadWorkout = useCallback(async (workoutId: string) => {
     setLoading(true)
 
@@ -614,7 +613,8 @@ export default function WorkoutSessionPage() {
           timerConfig: dbWorkout.timerConfig || null,
         }
 
-        const cards = flattenExercisesToCards(transformedWorkout.exercises)
+        const rounds = parseRoundsFromDescription(transformedWorkout)
+        const cards = buildWorkoutCards(transformedWorkout.exercises, rounds)
         setWorkout(transformedWorkout)
         setWorkoutCards(cards)
         setExerciseMetrics(createInitialMetrics(cards))
@@ -626,7 +626,8 @@ export default function WorkoutSessionPage() {
         const found = workouts.find((w: Workout) => w.id === workoutId)
 
         if (found) {
-          const cards = flattenExercisesToCards(found.exercises)
+          const rounds = parseRoundsFromDescription(found)
+          const cards = buildWorkoutCards(found.exercises, rounds)
           setWorkout(found)
           setWorkoutCards(cards)
           setExerciseMetrics(createInitialMetrics(cards))
@@ -643,7 +644,8 @@ export default function WorkoutSessionPage() {
       const found = workouts.find((w: Workout) => w.id === workoutId)
 
       if (found) {
-        const cards = flattenExercisesToCards(found.exercises)
+        const rounds = parseRoundsFromDescription(found)
+        const cards = buildWorkoutCards(found.exercises, rounds)
         setWorkout(found)
         setWorkoutCards(cards)
         setExerciseMetrics(createInitialMetrics(cards))
@@ -656,7 +658,7 @@ export default function WorkoutSessionPage() {
     } finally {
       setLoading(false)
     }
-  }, [applyTimerConfiguration])
+  }, [applyTimerConfiguration, parseRoundsFromDescription])
 
   useEffect(() => {
     isPausedRef.current = isPaused
@@ -766,11 +768,49 @@ export default function WorkoutSessionPage() {
     setShowMetricDialog(true)
   }
 
-  const toggleComplete = (cardId: string) => {
-    const metric = exerciseMetrics[cardId]
-    if (!metric) return
-    updateMetric(cardId, { completed: !metric.completed })
-  }
+  // Tap-to-advance: increment set, mark complete on final set
+  const advanceCardProgress = useCallback((cardId: string) => {
+    setExerciseMetrics(prev => {
+      const metric = prev[cardId]
+      if (!metric || metric.completed) return prev
+
+      const card = workoutCards.find(c => c.id === cardId)
+      if (!card) return prev
+
+      const currentSet = Math.min(Math.max(metric.roundCompleted ?? 1, 1), card.totalSets)
+
+      if (currentSet < card.totalSets) {
+        return {
+          ...prev,
+          [cardId]: {
+            ...metric,
+            roundCompleted: currentSet + 1,
+          },
+        }
+      } else {
+        return {
+          ...prev,
+          [cardId]: {
+            ...metric,
+            roundCompleted: card.totalSets,
+            completed: true,
+          },
+        }
+      }
+    })
+  }, [workoutCards])
+
+  // Check if all cards are completed and auto-prompt
+  useEffect(() => {
+    if (showCompletionDialog || showReadyToCompleteDialog) return
+    if (workoutCards.length === 0) return
+    const allDone = workoutCards.every(card => exerciseMetrics[card.id]?.completed)
+    if (!allDone) return
+
+    setIsPaused(true)
+    isPausedRef.current = true
+    setShowReadyToCompleteDialog(true)
+  }, [exerciseMetrics, workoutCards, showCompletionDialog, showReadyToCompleteDialog])
 
   const handleDiscardWorkout = () => {
     if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current)
@@ -819,7 +859,7 @@ export default function WorkoutSessionPage() {
         prHighlights,
       }
 
-      let existingCompletions: any[] = []
+      let existingCompletions: unknown[] = []
       try {
         existingCompletions = JSON.parse(localStorage.getItem("completedWorkouts") || "[]")
       } catch {
@@ -1074,27 +1114,32 @@ export default function WorkoutSessionPage() {
 
               if (!metric) return null
 
-              const hasLoggedMetrics = metric.isRun
-                ? Boolean((metric.distance && metric.distance > 0) || (metric.timeSeconds && metric.timeSeconds > 0))
-                : Boolean((metric.reps && metric.reps > 0) || (metric.weight && metric.weight > 0))
+              const isCompleted = metric.completed
+              const activeSet = Math.min(Math.max(metric.roundCompleted ?? 1, 1), card.totalSets)
 
               return (
                 <div
                   key={card.id}
                   role="button"
                   tabIndex={0}
-                  onClick={() => openMetricDialog(card.id)}
+                  onClick={() => {
+                    if (!isCompleted) {
+                      advanceCardProgress(card.id)
+                    }
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault()
-                      openMetricDialog(card.id)
+                      if (!isCompleted) {
+                        advanceCardProgress(card.id)
+                      }
                     }
                   }}
                   className={cn(
-                    "w-full rounded-3xl border p-4 text-left transition-colors",
-                    metric.completed
-                      ? "border-green-500/35 bg-green-500/[0.04]"
-                      : "border-slate-700 bg-slate-900/75 hover:border-primary/60"
+                    "w-full rounded-3xl border p-4 text-left transition-all",
+                    isCompleted
+                      ? "border-green-500/35 bg-green-500/[0.04] shadow-[0_4px_12px_rgba(34,197,94,0.22)]"
+                      : "border-slate-700 bg-slate-900/75 hover:border-primary/60 cursor-pointer active:scale-[0.98]"
                   )}
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -1110,9 +1155,9 @@ export default function WorkoutSessionPage() {
 
                       <div className="flex flex-wrap items-center gap-2 text-xs">
                         <span className="rounded-full bg-slate-800/95 px-3 py-1 text-base font-medium text-text-secondary md:text-xs">
-                          Set {metric.roundCompleted ?? card.setNumber} of {metric.roundTotal ?? card.totalSets}
+                          Set {activeSet} of {card.totalSets}
                         </span>
-                        {metric.isRun ? (
+                        {card.isRun ? (
                           <span className="rounded-full bg-blue-500/10 px-3 py-1 text-base font-medium text-blue-300 md:text-xs">
                             Run
                           </span>
@@ -1124,50 +1169,52 @@ export default function WorkoutSessionPage() {
                       </div>
 
                       <div className="text-base text-text-tertiary md:text-sm">
-                        {metric.isRun ? (
-                          <>
-                            {metric.distance && metric.distance > 0 ? (
-                              <span>{formatDistance(metric.distance, metric.distanceUnit || "m")}</span>
-                            ) : (
-                              <span>Tap to log distance & time</span>
-                            )}
-                            {metric.timeSeconds && metric.timeSeconds > 0 && (
-                              <span> · {formatDuration(metric.timeSeconds)}</span>
-                            )}
-                          </>
-                        ) : hasLoggedMetrics ? (
-                          <>
-                            {metric.reps && metric.reps > 0 ? `${metric.reps} reps` : "No reps logged"}
-                            {metric.weight && metric.weight > 0
-                              ? ` @ ${metric.weight} ${metric.weightUnit || "lbs"}`
-                              : ""}
-                          </>
+                        {isCompleted ? (
+                          <span className="font-semibold text-green-400/90">Completed</span>
                         ) : (
-                          <span>Tap to log reps & weight</span>
+                          <span>Tap to advance set</span>
                         )}
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        toggleComplete(card.id)
-                      }}
-                      className={cn(
-                        "inline-flex min-w-[132px] items-center justify-center gap-2 rounded-full px-4 py-2 text-2xl font-semibold transition-colors md:text-sm",
-                        metric.completed
-                          ? "border border-green-500/40 bg-green-500/15 text-green-300 hover:bg-green-500/20"
-                          : "bg-slate-800/90 text-text-secondary hover:text-white"
+                    <div className="flex flex-col items-end gap-2">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          if (!isCompleted) {
+                            advanceCardProgress(card.id)
+                          }
+                        }}
+                        className={cn(
+                          "inline-flex min-w-[132px] items-center justify-center gap-2 rounded-full px-4 py-2 text-2xl font-semibold transition-colors md:text-sm",
+                          isCompleted
+                            ? "border border-green-500/40 bg-green-500/15 text-green-300"
+                            : "bg-slate-800/90 text-text-secondary hover:text-white active:bg-slate-700/90"
+                        )}
+                        disabled={isCompleted}
+                      >
+                        {isCompleted ? (
+                          <CheckCircle2 className="h-5 w-5 md:h-4 md:w-4" />
+                        ) : (
+                          <Circle className="h-5 w-5 md:h-4 md:w-4" />
+                        )}
+                        {isCompleted ? "Done" : "Advance"}
+                      </button>
+
+                      {!isCompleted && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            openMetricDialog(card.id)
+                          }}
+                          className="text-xs text-text-tertiary hover:text-text-secondary transition-colors"
+                        >
+                          Log metrics
+                        </button>
                       )}
-                    >
-                      {metric.completed ? (
-                        <CheckCircle2 className="h-5 w-5 md:h-4 md:w-4" />
-                      ) : (
-                        <Circle className="h-5 w-5 md:h-4 md:w-4" />
-                      )}
-                      {metric.completed ? "Done" : "Complete"}
-                    </button>
+                    </div>
                   </div>
                 </div>
               )
@@ -1187,6 +1234,7 @@ export default function WorkoutSessionPage() {
         </div>
       </main>
 
+      {/* Timer Selection Dialog */}
       <Dialog open={showTimerSelectionDialog} onOpenChange={setShowTimerSelectionDialog}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
@@ -1324,6 +1372,7 @@ export default function WorkoutSessionPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Metric Editor Dialog */}
       <Dialog open={showMetricDialog} onOpenChange={setShowMetricDialog}>
         <DialogContent className="sm:max-w-lg">
           {selectedCard && selectedMetric && (
@@ -1338,33 +1387,30 @@ export default function WorkoutSessionPage() {
               <div className="space-y-4 py-2">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <Label htmlFor="round-completed">Rounds</Label>
+                    <Label htmlFor="round-completed">Current Set</Label>
                     <Input
                       id="round-completed"
                       type="number"
-                      min={0}
-                      value={selectedMetric.roundCompleted ?? ""}
+                      min={1}
+                      max={selectedCard.totalSets}
+                      value={selectedMetric.roundCompleted ?? 1}
                       onChange={(event) => {
                         const value = event.target.value
                         updateMetric(selectedCard.id, {
-                          roundCompleted: value === "" ? null : Math.max(0, Number.parseInt(value, 10) || 0),
+                          roundCompleted: value === "" ? 1 : Math.max(1, Math.min(selectedCard.totalSets, Number.parseInt(value, 10) || 1)),
                         })
                       }}
                     />
                   </div>
                   <div>
-                    <Label htmlFor="round-total">of</Label>
+                    <Label htmlFor="round-total">of Total Sets</Label>
                     <Input
                       id="round-total"
                       type="number"
-                      min={0}
-                      value={selectedMetric.roundTotal ?? ""}
-                      onChange={(event) => {
-                        const value = event.target.value
-                        updateMetric(selectedCard.id, {
-                          roundTotal: value === "" ? null : Math.max(0, Number.parseInt(value, 10) || 0),
-                        })
-                      }}
+                      min={1}
+                      value={selectedMetric.roundTotal ?? selectedCard.totalSets}
+                      readOnly
+                      className="opacity-60"
                     />
                   </div>
                 </div>
@@ -1509,7 +1555,9 @@ export default function WorkoutSessionPage() {
               <DialogFooter className="flex-col sm:flex-row gap-2">
                 <Button
                   variant="outline"
-                  onClick={() => toggleComplete(selectedCard.id)}
+                  onClick={() => {
+                    updateMetric(selectedCard.id, { completed: !selectedMetric.completed })
+                  }}
                   className="w-full sm:w-auto"
                 >
                   <CheckCircle2 className="h-4 w-4 mr-2" />
@@ -1527,6 +1575,42 @@ export default function WorkoutSessionPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Ready to Complete Dialog (auto-triggered when all cards done) */}
+      <Dialog open={showReadyToCompleteDialog} onOpenChange={setShowReadyToCompleteDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>All Workout Cards Completed</DialogTitle>
+            <DialogDescription>
+              Timer paused. Are you ready to complete this workout?
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="rounded-lg bg-surface px-3 py-2 text-sm text-text-secondary">
+            {completedCount}/{workoutCards.length} moves completed in {formatDuration(sessionDuration)}
+          </div>
+
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowReadyToCompleteDialog(false)}
+              className="w-full sm:w-auto"
+            >
+              Not Yet
+            </Button>
+            <Button
+              onClick={() => {
+                setShowReadyToCompleteDialog(false)
+                setShowCompletionDialog(true)
+              }}
+              className="w-full sm:w-auto"
+            >
+              Yes, Complete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Completion Dialog */}
       <Dialog
         open={showCompletionDialog}
         onOpenChange={(open) => {
@@ -1539,7 +1623,7 @@ export default function WorkoutSessionPage() {
           {saveSuccess ? (
             <>
               <DialogHeader>
-                <DialogTitle className="text-center text-3xl">Great job! 🎉</DialogTitle>
+                <DialogTitle className="text-center text-3xl">Great job!</DialogTitle>
                 <DialogDescription className="text-center text-base">
                   Workout saved in {formatDuration(sessionDuration)}.
                 </DialogDescription>
@@ -1640,6 +1724,7 @@ export default function WorkoutSessionPage() {
         </DialogContent>
       </Dialog>
 
+      {/* End Dialog */}
       <Dialog open={showEndDialog} onOpenChange={setShowEndDialog}>
         <DialogContent>
           <DialogHeader>
