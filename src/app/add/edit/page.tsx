@@ -3,13 +3,13 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useAuthStore } from "@/store"
-import { Login } from "@/components/auth/login"
 import { Header } from "@/components/layout/header"
 import { MobileNav } from "@/components/layout/mobile-nav"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import Link from "next/link"
 import { WorkoutCardList } from "@/components/workout/workout-card-list"
 import {
   buildCardLayout,
@@ -26,6 +26,12 @@ import {
   Sparkles
 } from "lucide-react"
 import { WorkoutEnhancerButton } from "@/components/ai/workout-enhancer-button"
+import {
+  canGuestSaveMore,
+  getGuestSaveRemaining,
+  incrementGuestSave,
+} from "@/lib/guest-mode"
+import { trackEvent } from "@/lib/analytics"
 
 interface WorkoutData {
   id: string
@@ -41,12 +47,15 @@ interface WorkoutData {
 
 export default function EditWorkoutPage() {
   const { isAuthenticated, user } = useAuthStore()
+  const isGuest = !isAuthenticated
   const router = useRouter()
   const [workoutData, setWorkoutData] = useState<WorkoutData | null>(null)
   const [workoutTitle, setWorkoutTitle] = useState("")
   const [workoutDescription, setWorkoutDescription] = useState("")
   const [cards, setCards] = useState<WorkoutCard[]>([])  // Changed from exercises
   const [isSaving, setIsSaving] = useState(false)
+  const [guestRemainingSaves, setGuestRemainingSaves] = useState(3)
+  const [guestSaveError, setGuestSaveError] = useState<string | null>(null)
   const [workoutType, setWorkoutType] = useState<string>('standard')
   const [workoutStructure, setWorkoutStructure] = useState<any>(null)
   const [amrapBlocks, setAmrapBlocks] = useState<AMRAPBlockDraft[]>([])
@@ -248,13 +257,14 @@ export default function EditWorkoutPage() {
       }
     } else {
       // No data found, redirect back
-      router.push('/add')
+      router.push(isGuest ? '/start' : '/add')
     }
-  }, [router])
+  }, [isGuest, router])
 
-  if (!isAuthenticated) {
-    return <Login />
-  }
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    setGuestRemainingSaves(getGuestSaveRemaining())
+  }, [])
 
   if (!workoutData) {
     return (
@@ -280,11 +290,6 @@ export default function EditWorkoutPage() {
   }
 
   const handleSave = async () => {
-    if (!user?.id) {
-      alert('You must be logged in to save workouts')
-      return
-    }
-
     setIsSaving(true)
     try {
       // Collapse cards back to exercises for saving
@@ -341,6 +346,57 @@ export default function EditWorkoutPage() {
           ? workoutStructure ?? emomStructure
           : workoutStructure
       const structureWithLayout = { ...(structure ?? {}), cardLayout }
+      const estimatedDuration = workoutData.llmData?.workoutV1?.totalDuration || estimateDuration(exercises)
+      const difficulty = workoutData.llmData?.workoutV1?.difficulty || 'moderate'
+      const tags = workoutData.llmData?.workoutV1?.tags || []
+
+      if (!user?.id) {
+        if (!canGuestSaveMore()) {
+          setGuestSaveError("You have reached the 3 workout guest save limit. Create a free account to keep going.")
+          setGuestRemainingSaves(getGuestSaveRemaining())
+          trackEvent("guest_save_limit_reached")
+          return
+        }
+
+        const existingWorkouts = JSON.parse(localStorage.getItem('workouts') || '[]')
+        const finalWorkout = {
+          id: workoutData.id,
+          title: workoutTitle,
+          description: workoutDescription,
+          exercises,
+          content: workoutData.content,
+          author: workoutData.author,
+          createdAt: workoutData.createdAt,
+          updatedAt: new Date().toISOString(),
+          source: workoutData.source,
+          type: workoutData.type,
+          totalDuration: estimatedDuration,
+          difficulty,
+          tags,
+          llmData: workoutData.llmData,
+          workoutType: resolvedWorkoutType,
+          structure: structureWithLayout,
+          amrapBlocks: amrapBlocksPayload,
+          emomBlocks: emomBlocksPayload,
+          aiNotes: null,
+          aiEnhanced: workoutDescription.includes('**AI Insights:**'),
+          thumbnailUrl: workoutData.thumbnailUrl || null,
+          guestLocked: true,
+        }
+        const withoutCurrent = existingWorkouts.filter((workout: { id?: string }) => workout.id !== workoutData.id)
+        withoutCurrent.push(finalWorkout)
+        localStorage.setItem('workouts', JSON.stringify(withoutCurrent))
+        incrementGuestSave()
+        setGuestRemainingSaves(getGuestSaveRemaining())
+        setGuestSaveError(null)
+        sessionStorage.removeItem('workoutToEdit')
+        window.dispatchEvent(new Event('workoutsUpdated'))
+        trackEvent("guest_workout_saved", {
+          source: workoutData.source,
+        })
+        router.push(`/workout/${workoutData.id}`)
+        return
+      }
 
       // Prepare workout data for DynamoDB
       const workoutToSave = {
@@ -353,9 +409,9 @@ export default function EditWorkoutPage() {
         createdAt: workoutData.createdAt,
         source: workoutData.source,
         type: workoutData.type,
-        totalDuration: workoutData.llmData?.workoutV1?.totalDuration || estimateDuration(exercises),
-        difficulty: workoutData.llmData?.workoutV1?.difficulty || 'moderate',
-        tags: workoutData.llmData?.workoutV1?.tags || [],
+        totalDuration: estimatedDuration,
+        difficulty,
+        tags,
         llmData: workoutData.llmData,
         workoutType: resolvedWorkoutType,
         structure: structureWithLayout,
@@ -394,6 +450,14 @@ export default function EditWorkoutPage() {
 
       // Clear session storage
       sessionStorage.removeItem('workoutToEdit')
+      trackEvent("authenticated_workout_saved", {
+        source: workoutData.source,
+      })
+
+      if (!user.onboardingCompleted && !user.onboardingSkipped) {
+        router.push(`/onboarding?step=goals&next=${encodeURIComponent(`/workout/${workout.workoutId}`)}`)
+        return
+      }
 
       // Navigate to workout view
       router.push(`/workout/${workout.workoutId}`)
@@ -582,7 +646,7 @@ export default function EditWorkoutPage() {
 
   return (
     <>
-      <Header />
+      {isAuthenticated && <Header />}
       <main className="min-h-screen pb-20 md:pb-8">
         <div className="max-w-6xl mx-auto px-4 py-8">
           {/* Header */}
@@ -591,7 +655,7 @@ export default function EditWorkoutPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => router.push('/add')}
+                onClick={() => router.push(isGuest ? '/start' : '/add')}
               >
                 <ArrowLeft className="h-4 w-4" />
               </Button>
@@ -605,6 +669,29 @@ export default function EditWorkoutPage() {
               </div>
             </div>
 
+            {isGuest && (
+              <div className="mb-6 rounded-2xl border border-primary/20 bg-primary/10 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-text-primary">
+                      Guest preview mode
+                    </div>
+                    <p className="text-sm text-text-secondary">
+                      Save up to {guestRemainingSaves} more workout{guestRemainingSaves === 1 ? "" : "s"} locally before creating an account.
+                    </p>
+                    {guestSaveError && (
+                      <p className="mt-2 text-sm text-destructive">{guestSaveError}</p>
+                    )}
+                  </div>
+                  <Link href="/auth/login?mode=signup&callbackUrl=%2Fadd" className="block">
+                    <Button variant="outline" className="w-full md:w-auto">
+                      Create Free Account
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            )}
+
             {/* Import Info */}
             {workoutData.llmData && (
               <div className="mb-6 p-4 bg-primary/10 border border-primary/20 rounded-lg">
@@ -616,13 +703,14 @@ export default function EditWorkoutPage() {
                     </span>
                   </div>
 
-                  {/* AI Enhancement Button */}
-                  <WorkoutEnhancerButton
-                    rawText={workoutData.content}
-                    onEnhanced={handleAIEnhancement}
-                    size="sm"
-                    variant="outline"
-                  />
+                  {isAuthenticated && (
+                    <WorkoutEnhancerButton
+                      rawText={workoutData.content}
+                      onEnhanced={handleAIEnhancement}
+                      size="sm"
+                      variant="outline"
+                    />
+                  )}
                 </div>
 
                 {workoutData.llmData.breakdown && (
@@ -717,7 +805,7 @@ export default function EditWorkoutPage() {
                       <div>Cards: {cards.length}</div>
                       <div>Exercises: {cards.filter(c => c.type === 'exercise').length}</div>
                       <div>Est. Duration: {estimateDuration(collapseCardsToExercises(cards))} min</div>
-                      <div>Source: {workoutData.source === 'manual' ? 'Manual Entry' : 'Instagram'}</div>
+                      <div>Source: {workoutData.type === 'sample' ? 'Sample Workout' : workoutData.source === 'manual' ? 'Manual Entry' : 'Instagram'}</div>
                       {workoutData.author && (
                         <div>From: @{workoutData.author.username}</div>
                       )}
@@ -730,11 +818,11 @@ export default function EditWorkoutPage() {
                     disabled={!workoutTitle || typeof workoutTitle !== 'string' || !workoutTitle.trim() || cards.length === 0 || isSaving}
                   >
                     {isSaving ? (
-                      <>Creating Workout...</>
+                      <>{isGuest ? 'Saving Workout...' : 'Creating Workout...'}</>
                     ) : (
                       <>
                         <Save className="h-4 w-4 mr-2" />
-                        Save New Workout
+                        {isGuest ? 'Save Workout Locally' : 'Save New Workout'}
                       </>
                     )}
                   </Button>
@@ -767,7 +855,7 @@ export default function EditWorkoutPage() {
           </div>
         </div>
       </main>
-      <MobileNav />
+      {isAuthenticated && <MobileNav />}
     </>
   )
 }

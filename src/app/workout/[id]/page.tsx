@@ -1,10 +1,9 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
 import { useAuthStore } from "@/store"
-import { Login } from "@/components/auth/login"
 import { Header } from "@/components/layout/header"
 import { MobileNav } from "@/components/layout/mobile-nav"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -32,6 +31,7 @@ import {
   Trash2
 } from "lucide-react"
 import { formatTime as formatAmrapTime } from "@/lib/amrap-migration"
+import { getGuestSaveRemaining } from "@/lib/guest-mode"
 
 interface Exercise {
   id: string
@@ -104,23 +104,25 @@ const getAmrapTotalSeconds = (workout: Workout) => {
 
 export default function WorkoutViewPage() {
   const { isAuthenticated, user } = useAuthStore()
+  const isGuest = !isAuthenticated
   const router = useRouter()
   const params = useParams()
   const [workout, setWorkout] = useState<Workout | null>(null)
   const [loading, setLoading] = useState(true)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [guestRemainingSaves, setGuestRemainingSaves] = useState(3)
 
-  useEffect(() => {
-    const workoutId = params?.id as string
-    if (workoutId && user?.id) {
-      loadWorkout(workoutId)
-    }
-  }, [params?.id, user?.id])
-
-  const loadWorkout = async (workoutId: string) => {
+  const loadWorkout = useCallback(async (workoutId: string) => {
     setLoading(true)
     try {
+      if (!user?.id) {
+        const workouts = JSON.parse(localStorage.getItem('workouts') || '[]')
+        const found = workouts.find((w: Workout) => w.id === workoutId)
+        setWorkout(found || null)
+        return
+      }
+
       // Load from API (which calls DynamoDB on the server)
       const response = await fetch(`/api/workouts/${workoutId}`)
 
@@ -165,13 +167,34 @@ export default function WorkoutViewPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [user?.id])
+
+  useEffect(() => {
+    const workoutId = params?.id as string
+    if (workoutId) {
+      loadWorkout(workoutId)
+    }
+  }, [params?.id, loadWorkout])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    setGuestRemainingSaves(getGuestSaveRemaining())
+  }, [])
 
   const handleDelete = async () => {
-    if (!workout || !user?.id) return
+    if (!workout) return
 
     setIsDeleting(true)
     try {
+      if (!user?.id) {
+        const workouts = JSON.parse(localStorage.getItem('workouts') || '[]')
+        const updatedWorkouts = workouts.filter((w: Workout) => w.id !== workout.id)
+        localStorage.setItem('workouts', JSON.stringify(updatedWorkouts))
+        window.dispatchEvent(new Event('workoutsUpdated'))
+        router.push('/start')
+        return
+      }
+
       // Delete from API (DynamoDB)
       const response = await fetch(`/api/workouts/${workout.id}`, {
         method: 'DELETE',
@@ -200,14 +223,10 @@ export default function WorkoutViewPage() {
     }
   }
 
-  if (!isAuthenticated) {
-    return <Login />
-  }
-
   if (loading) {
     return (
       <>
-        <Header />
+        {isAuthenticated && <Header />}
         <main className="min-h-screen flex items-center justify-center">
           <div className="text-center">
             <Loader2 className="h-12 w-12 text-primary mx-auto mb-4 animate-spin" />
@@ -221,7 +240,7 @@ export default function WorkoutViewPage() {
   if (!workout) {
     return (
       <>
-        <Header />
+        {isAuthenticated && <Header />}
         <main className="min-h-screen flex items-center justify-center">
           <div className="text-center">
             <AlertCircle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
@@ -415,7 +434,7 @@ export default function WorkoutViewPage() {
 
   return (
     <>
-      <Header />
+      {isAuthenticated && <Header />}
       <main className="min-h-screen pb-20 md:pb-8">
         <div className="max-w-4xl mx-auto px-4 py-8">
           {/* Header */}
@@ -448,50 +467,72 @@ export default function WorkoutViewPage() {
               </div>
             </div>
 
+            {isGuest && (
+              <div className="mb-4 rounded-2xl border border-primary/20 bg-primary/10 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-text-primary">Saved locally as guest</div>
+                    <p className="text-sm text-text-secondary">
+                      You can save {guestRemainingSaves} more workout{guestRemainingSaves === 1 ? "" : "s"} locally before signing up. Guest saves are view-only after save.
+                    </p>
+                  </div>
+                  <Link href={`/auth/login?mode=signup&callbackUrl=${encodeURIComponent('/add')}`} className="block">
+                    <Button variant="outline" className="w-full md:w-auto">Create Free Account</Button>
+                  </Link>
+                </div>
+              </div>
+            )}
+
             {/* Action buttons - responsive grid layout */}
             <div className="grid grid-cols-2 md:flex md:flex-wrap gap-2 mb-4">
-              <EnhanceWithAIButton
-                workoutId={workout.id}
-                onEnhanced={() => loadWorkout(workout.id)}
-                variant="outline"
-                size="sm"
-                aiEnhanced={workout.aiEnhanced}
-                className="w-full md:w-auto"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  // Navigate to card view
-                  const workoutForEdit = {
-                    id: workout.id,
-                    title: workout.title,
-                    content: workout.content,
-                    llmData: {
-                      exercises: workout.exercises,
-                      workoutType: workout.workoutType,
-                      structure: workout.structure,
-                      amrapBlocks: workout.amrapBlocks,
-                      emomBlocks: workout.emomBlocks,
-                    },
-                    createdAt: workout.createdAt,
-                    source: workout.source,
-                    type: workout.type,
-                  }
-                  sessionStorage.setItem('workoutToEdit', JSON.stringify(workoutForEdit))
-                  router.push('/add/edit')
-                }}
-                className="w-full md:w-auto"
-              >
-                <Play className="h-4 w-4 md:mr-2" />
-                <span className="hidden sm:inline">View Cards</span>
-              </Button>
-              <Link href={`/workout/${workout.id}/edit`} className="w-full md:w-auto">
-                <Button variant="outline" size="sm" className="w-full">
-                  <Edit className="h-4 w-4 md:mr-2" />
-                  <span className="hidden sm:inline">Edit</span>
+              {!isGuest && (
+                <EnhanceWithAIButton
+                  workoutId={workout.id}
+                  onEnhanced={() => loadWorkout(workout.id)}
+                  variant="outline"
+                  size="sm"
+                  aiEnhanced={workout.aiEnhanced}
+                  className="w-full md:w-auto"
+                />
+              )}
+              {!isGuest && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    // Navigate to card view
+                    const workoutForEdit = {
+                      id: workout.id,
+                      title: workout.title,
+                      content: workout.content,
+                      llmData: {
+                        exercises: workout.exercises,
+                        workoutType: workout.workoutType,
+                        structure: workout.structure,
+                        amrapBlocks: workout.amrapBlocks,
+                        emomBlocks: workout.emomBlocks,
+                      },
+                      createdAt: workout.createdAt,
+                      source: workout.source,
+                      type: workout.type,
+                    }
+                    sessionStorage.setItem('workoutToEdit', JSON.stringify(workoutForEdit))
+                    router.push('/add/edit')
+                  }}
+                  className="w-full md:w-auto"
+                >
+                  <Play className="h-4 w-4 md:mr-2" />
+                  <span className="hidden sm:inline">View Cards</span>
                 </Button>
-              </Link>
+              )}
+              {!isGuest && (
+                <Link href={`/workout/${workout.id}/edit`} className="w-full md:w-auto">
+                  <Button variant="outline" size="sm" className="w-full">
+                    <Edit className="h-4 w-4 md:mr-2" />
+                    <span className="hidden sm:inline">Edit</span>
+                  </Button>
+                </Link>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -546,16 +587,18 @@ export default function WorkoutViewPage() {
             )}
 
             {/* Quick actions */}
-            <div className="flex gap-2 mt-2">
-              <Button
-                onClick={() => router.push(`/workout/${workout.id}/session`)}
-                className="w-full md:w-auto flex items-center justify-center gap-2"
-                size="lg"
-              >
-                <Play className="h-5 w-5" />
-                <span>Start Workout</span>
-              </Button>
-            </div>
+            {!isGuest && (
+              <div className="flex gap-2 mt-2">
+                <Button
+                  onClick={() => router.push(`/workout/${workout.id}/session`)}
+                  className="w-full md:w-auto flex items-center justify-center gap-2"
+                  size="lg"
+                >
+                  <Play className="h-5 w-5" />
+                  <span>Start Workout</span>
+                </Button>
+              </div>
+            )}
 
           </div>
 
@@ -709,7 +752,7 @@ export default function WorkoutViewPage() {
                 <div>
                   <div className="text-text-secondary mb-1">Imported from</div>
                   <div className="text-text-primary">
-                    {workout.type === 'url' ? 'Instagram' : workout.type === 'manual' ? 'Manual Entry' : 'Image Upload'}
+                    {workout.type === 'url' ? 'Instagram' : workout.type === 'manual' ? 'Manual Entry' : workout.type === 'sample' ? 'Sample Workout' : 'Image Upload'}
                   </div>
                 </div>
                 
@@ -720,7 +763,7 @@ export default function WorkoutViewPage() {
                   </div>
                 </div>
                 
-                {workout.source !== 'manual' && (
+                {/^https?:\/\//.test(workout.source) && (
                   <div className="md:col-span-2">
                     <div className="text-text-secondary mb-1">Source URL</div>
                     <div className="flex items-center space-x-2">
@@ -746,7 +789,7 @@ export default function WorkoutViewPage() {
           </Card>
         </div>
       </main>
-      <MobileNav />
+      {isAuthenticated && <MobileNav />}
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>

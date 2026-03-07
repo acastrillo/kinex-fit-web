@@ -9,7 +9,7 @@
  * - "Full body strength workout"
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthenticatedSession } from '@/lib/api-auth';
+import { getOptionalAuthenticatedSession } from '@/lib/api-auth';
 import { dynamoDBUsers, dynamoDBWorkouts, DynamoDBWorkout } from '@/lib/dynamodb';
 import { generateWorkout, validateGeneratedWorkout } from '@/lib/ai/workout-generator';
 import { getAIRequestLimit, normalizeSubscriptionTier } from '@/lib/subscription-tiers';
@@ -17,6 +17,13 @@ import { checkRateLimit } from '@/lib/rate-limit';
 import { hasRole } from '@/lib/rbac';
 import { checkUsageCap } from '@/lib/ai/usage-tracking';
 import { isMonthlyResetDue } from '@/lib/quota-reset';
+import {
+  applyGuestSessionCookie,
+  buildGuestQuotaExceededResponse,
+  consumeGuestQuota,
+  GUEST_AI_LIMIT,
+  getOrCreateGuestSession,
+} from '@/lib/guest-session';
 
 interface GenerateWorkoutRequest {
   prompt: string;
@@ -34,24 +41,24 @@ interface GenerateWorkoutResponse {
   rationale?: string;
   alternatives?: string[];
   error?: string;
+  isGuest?: boolean;
+  aiUsed?: number;
+  aiLimit?: number;
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse<GenerateWorkoutResponse>> {
   try {
-    // Authentication
-    const auth = await getAuthenticatedSession();
-    if ('error' in auth) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-    const { userId, session } = auth;
+    const auth = await getOptionalAuthenticatedSession();
+    const guestSession = auth ? null : await getOrCreateGuestSession(req.headers);
+    const respond = <T extends GenerateWorkoutResponse>(response: NextResponse<T>) =>
+      (guestSession ? applyGuestSessionCookie(response, guestSession) : response) as NextResponse<T>;
+    const actorId = auth?.userId ?? guestSession!.actorId;
+    const rateLimitId = auth?.userId ?? guestSession!.rateLimitId;
 
     // Rate limiting (30 AI requests per hour across all AI features)
-    const rateLimit = await checkRateLimit(userId, 'api:ai');
+    const rateLimit = await checkRateLimit(rateLimitId, 'api:ai');
     if (!rateLimit.success) {
-      return NextResponse.json(
+      return respond(NextResponse.json(
         {
           success: false,
           error: 'Too many AI requests',
@@ -68,7 +75,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateWorko
             'Retry-After': Math.ceil((rateLimit.reset - Date.now()) / 1000).toString(),
           },
         }
-      );
+      ));
     }
 
     // Parse request
@@ -76,104 +83,61 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateWorko
     const { prompt } = body;
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
-      return NextResponse.json(
+      return respond(NextResponse.json(
         { success: false, error: 'Prompt is required and must be a non-empty string' },
         { status: 400 }
-      );
+      ));
     }
 
-    // Get user and check AI quota (create if doesn't exist)
-    let user = await dynamoDBUsers.get(userId);
-    if (!user) {
-      // User not synced to DynamoDB yet - create with defaults
-      console.log('[AI Generate] User not found in DynamoDB, creating with defaults');
-      try {
-        const userEmail = session.user?.email || `user-${userId}@temp.com`;
-        const firstName = (session.user as any)?.firstName || null;
-        const lastName = (session.user as any)?.lastName || null;
-
-        // Create user with free tier (production default)
-        user = await dynamoDBUsers.upsert({
-          id: userId,
-          email: userEmail,
-          firstName,
-          lastName,
-          subscriptionTier: 'free',
-          aiRequestsLimit: 0,
-        });
-        console.log('[AI Generate] User created successfully');
-      } catch (createError) {
-        console.error('[AI Generate] Failed to create user:', createError);
-        return NextResponse.json(
-          { success: false, error: 'User not found and could not be created. Please try logging out and back in.' },
-          { status: 500 }
-        );
-      }
-    }
-
-    const tier = normalizeSubscriptionTier(user.subscriptionTier);
-    const aiLimit = getAIRequestLimit(tier);
-
-    // ADMIN BYPASS: Admins have unlimited AI quotas
-    const isAdmin = hasRole(user, 'admin');
-
-    let aiUsed = user.aiRequestsUsed || 0;
-    if (!isAdmin && isMonthlyResetDue(user.lastAiRequestReset)) {
-      await dynamoDBUsers.resetAIQuota(userId);
-      aiUsed = 0;
-    }
-
-    // Check if user has AI quota remaining (skip for admins)
-    if (!isAdmin && aiLimit <= 0) {
-      const upgradeMessage = aiLimit === 0
-        ? 'AI workout generation is not available on the free tier. Upgrade to Core ($8.99/mo) for 10 AI requests per month.'
-        : `You've reached your AI request limit (${aiUsed}/${aiLimit} used this month). Upgrade to Pro for more AI requests.`;
-
-      return NextResponse.json(
-        {
-          success: false,
-          error: upgradeMessage,
-          quotaRemaining: 0,
-          tier,
-          aiUsed,
-          aiLimit,
-        },
-        { status: 403 }
-      );
-    }
-
-    // Check usage caps (cost, tokens, requests) before consuming quota
-    if (!isAdmin) {
-      const capCheck = await checkUsageCap(userId, tier);
-      if (!capCheck.allowed) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Usage cap exceeded: ${capCheck.reason}. Your plan will reset next month.`,
-            quotaRemaining: 0,
-            tier,
-            usage: capCheck.usage,
-            limits: capCheck.limits,
-          },
-          { status: 403 }
-        );
-      }
-
-      // Warn if approaching limits (80% for most tiers, 90% for Elite)
-      if (capCheck.shouldWarn) {
-        console.warn(`[AI Generate] User ${userId} approaching usage cap:`, {
-          usage: capCheck.usage,
-          limits: capCheck.limits,
-          percentages: capCheck.percentages,
-        });
-      }
-    }
-
+    let user = null;
+    let tier = 'guest';
+    let aiLimit = GUEST_AI_LIMIT;
+    let aiUsed = guestSession?.usage.aiUsed ?? 0;
     let aiUsedAfter = aiUsed;
-    if (!isAdmin) {
-      const consumeResult = await dynamoDBUsers.consumeQuota(userId, 'aiRequestsUsed', aiLimit);
-      if (!consumeResult.success) {
-        const upgradeMessage = `You've reached your AI request limit (${aiUsed}/${aiLimit} used this month). Upgrade to Pro for more AI requests.`;
+    let isAdmin = false;
+
+    if (auth) {
+      user = await dynamoDBUsers.get(auth.userId);
+      if (!user) {
+        console.log('[AI Generate] User not found in DynamoDB, creating with defaults');
+        try {
+          const userEmail = auth.session.user?.email || `user-${auth.userId}@temp.com`;
+          const firstName = (auth.session.user as any)?.firstName || null;
+          const lastName = (auth.session.user as any)?.lastName || null;
+
+          user = await dynamoDBUsers.upsert({
+            id: auth.userId,
+            email: userEmail,
+            firstName,
+            lastName,
+            subscriptionTier: 'free',
+            aiRequestsLimit: 0,
+          });
+          console.log('[AI Generate] User created successfully');
+        } catch (createError) {
+          console.error('[AI Generate] Failed to create user:', createError);
+          return NextResponse.json(
+            { success: false, error: 'User not found and could not be created. Please try logging out and back in.' },
+            { status: 500 }
+          );
+        }
+      }
+
+      tier = normalizeSubscriptionTier(user.subscriptionTier);
+      aiLimit = getAIRequestLimit(tier);
+      isAdmin = hasRole(user, 'admin');
+      aiUsed = user.aiRequestsUsed || 0;
+
+      if (!isAdmin && isMonthlyResetDue(user.lastAiRequestReset)) {
+        await dynamoDBUsers.resetAIQuota(auth.userId);
+        aiUsed = 0;
+      }
+
+      if (!isAdmin && aiLimit <= 0) {
+        const upgradeMessage = aiLimit === 0
+          ? 'AI workout generation is not available on the free tier. Upgrade to Core ($8.99/mo) for 10 AI requests per month.'
+          : `You've reached your AI request limit (${aiUsed}/${aiLimit} used this month). Upgrade to Pro for more AI requests.`;
+
         return NextResponse.json(
           {
             success: false,
@@ -186,7 +150,70 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateWorko
           { status: 403 }
         );
       }
-      aiUsedAfter = consumeResult.newValue ?? aiUsed + 1;
+
+      if (!isAdmin) {
+        const capCheck = await checkUsageCap(auth.userId, tier);
+        if (!capCheck.allowed) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Usage cap exceeded: ${capCheck.reason}. Your plan will reset next month.`,
+              quotaRemaining: 0,
+              tier,
+              usage: capCheck.usage,
+              limits: capCheck.limits,
+            },
+            { status: 403 }
+          );
+        }
+
+        if (capCheck.shouldWarn) {
+          console.warn(`[AI Generate] User ${auth.userId} approaching usage cap:`, {
+            usage: capCheck.usage,
+            limits: capCheck.limits,
+            percentages: capCheck.percentages,
+          });
+        }
+
+        const consumeResult = await dynamoDBUsers.consumeQuota(auth.userId, 'aiRequestsUsed', aiLimit);
+        if (!consumeResult.success) {
+          const upgradeMessage = `You've reached your AI request limit (${aiUsed}/${aiLimit} used this month). Upgrade to Pro for more AI requests.`;
+          return NextResponse.json(
+            {
+              success: false,
+              error: upgradeMessage,
+              quotaRemaining: 0,
+              tier,
+              aiUsed,
+              aiLimit,
+            },
+            { status: 403 }
+          );
+        }
+        aiUsedAfter = consumeResult.newValue ?? aiUsed + 1;
+      }
+    } else if (guestSession) {
+      if (guestSession.usage.aiUsed >= GUEST_AI_LIMIT) {
+        return respond(
+          buildGuestQuotaExceededResponse({
+            feature: 'ai',
+            used: guestSession.usage.aiUsed,
+            limit: GUEST_AI_LIMIT,
+          }) as NextResponse<GenerateWorkoutResponse>
+        );
+      }
+
+      const guestQuota = await consumeGuestQuota(guestSession.guestId, 'ai', GUEST_AI_LIMIT);
+      if (!guestQuota.success) {
+        return respond(
+          buildGuestQuotaExceededResponse({
+            feature: 'ai',
+            used: guestQuota.usage.aiUsed,
+            limit: GUEST_AI_LIMIT,
+          }) as NextResponse<GenerateWorkoutResponse>
+        );
+      }
+      aiUsedAfter = guestQuota.usage.aiUsed;
     }
 
     const isProduction = process.env.NODE_ENV === 'production';
@@ -198,13 +225,13 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateWorko
     console.log('[AI Generate] Quota remaining:', isAdmin ? 'unlimited' : aiLimit - aiUsedAfter);
 
     // Get user's training profile (if available)
-    const trainingProfile = user.trainingProfile || undefined;
+    const trainingProfile = user?.trainingProfile || undefined;
 
     // Generate workout using AI
     const result = await generateWorkout({
       prompt,
       trainingProfile,
-      userId,
+      userId: actorId,
       subscriptionTier: tier,
     });
 
@@ -234,9 +261,48 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateWorko
       setDetails: [],
     })) || [];
 
+    if (!auth) {
+      const guestWorkout: Partial<DynamoDBWorkout> = {
+        workoutId: `guest_ai_${Date.now()}`,
+        title: result.workout.title || 'AI Generated Workout',
+        description: result.workout.description || '',
+        exercises,
+        content: prompt,
+        tags: result.workout.tags || [],
+        difficulty: result.workout.difficulty || 'intermediate',
+        totalDuration: result.workout.duration || 60,
+        source: 'ai-generate',
+        type: 'manual',
+        workoutType: 'standard',
+        aiEnhanced: true,
+        aiNotes: [
+          `AI generated workout from prompt: "${prompt}"`,
+          `Rationale: ${result.rationale}`,
+        ],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      return respond(NextResponse.json({
+        success: true,
+        workout: guestWorkout as DynamoDBWorkout,
+        cost: {
+          inputTokens: result.bedrockResponse.usage.inputTokens,
+          outputTokens: result.bedrockResponse.usage.outputTokens,
+          estimatedCost: result.bedrockResponse.cost?.total || 0,
+        },
+        quotaRemaining: Math.max(0, GUEST_AI_LIMIT - aiUsedAfter),
+        rationale: result.rationale,
+        alternatives: result.alternatives,
+        isGuest: true,
+        aiUsed: aiUsedAfter,
+        aiLimit: GUEST_AI_LIMIT,
+      }));
+    }
+
     // Create workout in DynamoDB
     const newWorkout: Partial<DynamoDBWorkout> = {
-      userId,
+      userId: auth.userId,
       workoutId: `workout_${Date.now()}`,
       title: result.workout.title || 'AI Generated Workout',
       description: result.workout.description || '',
@@ -257,7 +323,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateWorko
       updatedAt: new Date().toISOString(),
     };
 
-    await dynamoDBWorkouts.upsert(userId, newWorkout as DynamoDBWorkout);
+    await dynamoDBWorkouts.upsert(auth.userId, newWorkout as DynamoDBWorkout);
     const savedWorkout = newWorkout as DynamoDBWorkout;
 
     console.log('[AI Generate] Success!');
@@ -277,6 +343,9 @@ export async function POST(req: NextRequest): Promise<NextResponse<GenerateWorko
       quotaRemaining: isAdmin ? 999999 : Math.max(0, aiLimit - aiUsedAfter),
       rationale: result.rationale,
       alternatives: result.alternatives,
+      isGuest: false,
+      aiUsed: aiUsedAfter,
+      aiLimit,
     });
   } catch (error) {
     console.error('[AI Generate] Error:', error);

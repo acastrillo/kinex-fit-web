@@ -1,13 +1,20 @@
 // app/api/ocr/route.ts
 export const runtime = 'nodejs'; // ensure Node runtime (AWS SDK needs Node)
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { TextractClient, DetectDocumentTextCommand } from '@aws-sdk/client-textract';
-import { getAuthenticatedUserId } from '@/lib/api-auth';
+import { getOptionalAuthenticatedUserId } from '@/lib/api-auth';
 import { dynamoDBUsers } from '@/lib/dynamodb';
 import { getQuotaLimit, normalizeSubscriptionTier } from '@/lib/stripe';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { hasRole } from '@/lib/rbac';
 import { isMonthlyResetDue } from '@/lib/quota-reset';
+import {
+  applyGuestSessionCookie,
+  buildGuestQuotaExceededResponse,
+  consumeGuestQuota,
+  GUEST_SCAN_LIMIT,
+  getOrCreateGuestSession,
+} from '@/lib/guest-session';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB (Textract sync limit)
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'application/pdf'];
@@ -36,17 +43,18 @@ function getTextractClient() {
   });
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    // SECURITY FIX: Use new auth utility
-    const auth = await getAuthenticatedUserId();
-    if ('error' in auth) return auth.error;
-    const { userId } = auth;
+    const auth = await getOptionalAuthenticatedUserId();
+    const guestSession = auth ? null : await getOrCreateGuestSession(req.headers);
+    const rateLimitId = auth?.userId ?? guestSession!.rateLimitId;
+    const respond = (response: NextResponse) =>
+      guestSession ? applyGuestSessionCookie(response, guestSession) : response;
 
     // RATE LIMITING: Check rate limit (10 OCR requests per hour)
-    const rateLimit = await checkRateLimit(userId, 'api:ocr');
+    const rateLimit = await checkRateLimit(rateLimitId, 'api:ocr');
     if (!rateLimit.success) {
-      return NextResponse.json(
+      return respond(NextResponse.json(
         {
           error: 'Too many OCR requests',
           message: 'You have exceeded the rate limit for OCR processing. Please try again later.',
@@ -62,41 +70,56 @@ export async function POST(req: Request) {
             'X-RateLimit-Reset': rateLimit.reset.toString(),
           },
         }
-      );
+      ));
     }
 
-    // Check OCR quota
-    const user = await dynamoDBUsers.get(userId);
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
+    let user = null;
+    let userId = auth?.userId ?? null;
+    let isAdmin = false;
+    let tier = 'guest';
+    let scanLimit: number | null = GUEST_SCAN_LIMIT;
+    let scanUsed = guestSession?.usage.scanUsed ?? 0;
+    let ocrUsed = guestSession?.usage.ocrUsed ?? 0;
 
-    // ADMIN BYPASS: Admins have unlimited quotas
-    const isAdmin = hasRole(user, 'admin');
+    if (auth?.userId) {
+      user = await dynamoDBUsers.get(auth.userId);
+      if (!user) {
+        return NextResponse.json({ error: 'User not found' }, { status: 404 });
+      }
 
-    // Get quota limit based on subscription tier
-    const tier = normalizeSubscriptionTier(user.subscriptionTier);
-    const scanLimit = getQuotaLimit(tier, 'workoutScansMonthly');
+      userId = auth.userId;
+      isAdmin = hasRole(user, 'admin');
+      tier = normalizeSubscriptionTier(user.subscriptionTier);
+      scanLimit = getQuotaLimit(tier, 'workoutScansMonthly');
+      scanUsed = user.scanQuotaUsed ?? ((user.ocrQuotaUsed || 0) + (user.instagramImportsUsed || 0));
+      ocrUsed = user.ocrQuotaUsed || 0;
 
-    let scanUsed = user.scanQuotaUsed ?? ((user.ocrQuotaUsed || 0) + (user.instagramImportsUsed || 0));
-    let ocrUsed = user.ocrQuotaUsed || 0;
-    const lastScanReset = user.scanQuotaResetDate || user.ocrQuotaResetDate || user.lastInstagramImportReset;
-    if (!isAdmin && scanLimit !== null && isMonthlyResetDue(lastScanReset)) {
-      await dynamoDBUsers.resetScanQuota(userId);
-      scanUsed = 0;
-      ocrUsed = 0;
-    }
+      const lastScanReset = user.scanQuotaResetDate || user.ocrQuotaResetDate || user.lastInstagramImportReset;
+      if (!isAdmin && scanLimit !== null && isMonthlyResetDue(lastScanReset)) {
+        await dynamoDBUsers.resetScanQuota(userId);
+        scanUsed = 0;
+        ocrUsed = 0;
+      }
 
-    if (!isAdmin && scanLimit !== null && scanLimit <= 0) {
-      return NextResponse.json(
-        {
-          error: 'Scan quota exceeded',
-          message: 'You have reached your monthly scan limit. Upgrade your subscription for more scans.',
-          quotaUsed: scanUsed,
-          quotaLimit: scanLimit,
-          subscriptionTier: user.subscriptionTier
-        },
-        { status: 429 }
+      if (!isAdmin && scanLimit !== null && scanLimit <= 0) {
+        return NextResponse.json(
+          {
+            error: 'Scan quota exceeded',
+            message: 'You have reached your monthly scan limit. Upgrade your subscription for more scans.',
+            quotaUsed: scanUsed,
+            quotaLimit: scanLimit,
+            subscriptionTier: user.subscriptionTier
+          },
+          { status: 429 }
+        );
+      }
+    } else if ((guestSession?.usage.scanUsed ?? 0) >= GUEST_SCAN_LIMIT) {
+      return respond(
+        buildGuestQuotaExceededResponse({
+          feature: 'scan',
+          used: guestSession!.usage.scanUsed,
+          limit: GUEST_SCAN_LIMIT,
+        })
       );
     }
 
@@ -142,7 +165,20 @@ export async function POST(req: Request) {
 
     let scanUsedAfter = scanUsed;
     let ocrUsedAfter = ocrUsed;
-    if (!isAdmin && scanLimit !== null) {
+    if (!auth && guestSession) {
+      const guestQuota = await consumeGuestQuota(guestSession.guestId, 'ocr', GUEST_SCAN_LIMIT);
+      if (!guestQuota.success) {
+        return respond(
+          buildGuestQuotaExceededResponse({
+            feature: 'scan',
+            used: guestQuota.usage.scanUsed,
+            limit: GUEST_SCAN_LIMIT,
+          })
+        );
+      }
+      scanUsedAfter = guestQuota.usage.scanUsed;
+      ocrUsedAfter = guestQuota.usage.ocrUsed;
+    } else if (!isAdmin && scanLimit !== null && userId && user) {
       const consumeResult = await dynamoDBUsers.consumeQuota(userId, 'scanQuotaUsed', scanLimit);
       if (!consumeResult.success) {
         return NextResponse.json(
@@ -180,9 +216,9 @@ export async function POST(req: Request) {
         : undefined;
 
     // Get updated quota info
-    const currentLimit = isAdmin ? null : getQuotaLimit(tier, 'workoutScansMonthly');
+    const currentLimit = auth ? (isAdmin ? null : getQuotaLimit(tier, 'workoutScansMonthly')) : GUEST_SCAN_LIMIT;
 
-    return NextResponse.json({
+    return respond(NextResponse.json({
       text,
       confidence,
       quotaUsed: isAdmin ? scanUsed : scanUsedAfter,
@@ -191,7 +227,9 @@ export async function POST(req: Request) {
       scanQuotaUsed: isAdmin ? scanUsed : scanUsedAfter,
       scanQuotaLimit: currentLimit,
       ocrQuotaUsed: isAdmin ? ocrUsed : ocrUsedAfter,
-    });
+      subscriptionTier: user?.subscriptionTier || 'guest',
+      isGuest: !auth,
+    }));
   } catch (err: unknown) {
     return NextResponse.json({ error: String((err as Error)?.message || err) }, { status: 500 });
   }

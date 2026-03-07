@@ -22,13 +22,8 @@ import { verifyAccessToken } from "@/lib/mobile-jwt";
  * ```
  */
 export async function getAuthenticatedUserId(): Promise<{ userId: string } | { error: NextResponse }> {
-  // Check for Bearer token first (mobile clients)
-  const bearerResult = await extractBearerUserId();
-  if (bearerResult) return bearerResult;
-
-  // Fall back to NextAuth session (web clients)
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as { id?: string })?.id;
+  const auth = await getOptionalAuthenticatedUserId();
+  const userId = auth?.userId;
 
   if (!userId) {
     return {
@@ -59,13 +54,9 @@ export async function getAuthenticatedUserId(): Promise<{ userId: string } | { e
 export async function getAuthenticatedSession(): Promise<
   { userId: string; session: Session } | { error: NextResponse }
 > {
-  // Check for Bearer token first (mobile clients)
-  const bearerResult = await extractBearerSession();
-  if (bearerResult) return bearerResult;
-
-  // Fall back to NextAuth session (web clients)
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as { id?: string })?.id;
+  const auth = await getOptionalAuthenticatedSession();
+  const userId = auth?.userId;
+  const session = auth?.session;
 
   if (!userId || !session) {
     return {
@@ -74,6 +65,27 @@ export async function getAuthenticatedSession(): Promise<
         { status: 401 }
       ),
     };
+  }
+
+  return { userId, session };
+}
+
+export async function getOptionalAuthenticatedUserId(): Promise<{ userId: string } | null> {
+  const auth = await getOptionalAuthenticatedSession();
+  return auth ? { userId: auth.userId } : null;
+}
+
+export async function getOptionalAuthenticatedSession(): Promise<
+  { userId: string; session: Session } | null
+> {
+  const bearerResult = await extractBearerSession();
+  if (bearerResult) return bearerResult;
+
+  const session = await getServerSession(authOptions);
+  const userId = (session?.user as { id?: string })?.id;
+
+  if (!userId || !session) {
+    return null;
   }
 
   return { userId, session };
@@ -93,38 +105,6 @@ export function isAuthError<T extends { error: NextResponse }>(
   auth: T | { userId: string }
 ): auth is T {
   return 'error' in auth;
-}
-
-/**
- * Extract userId from Bearer token in Authorization header.
- * Returns { userId } if valid token found, null otherwise (to fall through to session auth).
- */
-async function extractBearerUserId(): Promise<{ userId: string } | null> {
-  const headersList = await headers();
-  const authHeader = headersList.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) return null;
-
-  try {
-    const token = authHeader.substring(7);
-    // Mobile apps use MOBILE_JWT_SECRET-signed access tokens.
-    const mobilePayload = await verifyAccessToken(token);
-    if (mobilePayload?.sub) {
-      return { userId: mobilePayload.sub };
-    }
-  } catch {
-    // Not a mobile token (or invalid) - try NextAuth token decoding below.
-  }
-
-  try {
-    const token = authHeader.substring(7);
-    const decoded = await decode({ token, secret: process.env.AUTH_SECRET! });
-    if (decoded?.id) {
-      return { userId: decoded.id as string };
-    }
-  } catch {
-    // Invalid token — fall through to session auth
-  }
-  return null;
 }
 
 /**

@@ -48,9 +48,9 @@ export function Landing() {
 
         {/* CTA Buttons */}
         <div className="w-full max-w-xs space-y-3">
-          <Link href="/auth/login?mode=signup" className="block">
+          <Link href="/start" className="block">
             <Button className="w-full h-14 text-lg font-semibold shadow-lg">
-              Get Started
+              Start With A Workout
             </Button>
           </Link>
           <Link href="/auth/login?mode=signin" className="block">

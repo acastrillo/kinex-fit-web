@@ -1,8 +1,11 @@
 "use client"
 
 import { useState } from "react"
+import { useAuthStore } from "@/store"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { syncGuestAIUsage } from "@/lib/guest-mode"
+import { trackEvent } from "@/lib/analytics"
 import { Sparkles, Loader2, CheckCircle2, Info } from "lucide-react"
 
 interface WorkoutEnhancerButtonProps {
@@ -20,6 +23,7 @@ export function WorkoutEnhancerButton({
   size = "default",
   variant = "default",
 }: WorkoutEnhancerButtonProps) {
+  const { isAuthenticated } = useAuthStore()
   const [isEnhancing, setIsEnhancing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
@@ -36,6 +40,9 @@ export function WorkoutEnhancerButton({
     setIsEnhancing(true)
     setError(null)
     setSuccess(false)
+    trackEvent("workout_enhancement_requested", {
+      authenticated: isAuthenticated,
+    })
 
     try {
       const response = await fetch('/api/ai/enhance-workout', {
@@ -56,6 +63,13 @@ export function WorkoutEnhancerButton({
       }
 
       // Success! Pass the enhanced workout object directly
+      if (!isAuthenticated && typeof data.aiUsed === "number") {
+        syncGuestAIUsage(data.aiUsed)
+      }
+      trackEvent("workout_enhancement_succeeded", {
+        authenticated: isAuthenticated,
+        isGuest: Boolean(data.isGuest),
+      })
       setSuccess(true)
       onEnhanced(data.enhancedWorkout)
 
@@ -63,6 +77,9 @@ export function WorkoutEnhancerButton({
       setTimeout(() => setSuccess(false), 3000)
     } catch (err: any) {
       console.error('Enhancement error:', err)
+      trackEvent("workout_enhancement_failed", {
+        authenticated: isAuthenticated,
+      })
       setError(err.message || 'Failed to enhance workout. Please try again.')
     } finally {
       setIsEnhancing(false)

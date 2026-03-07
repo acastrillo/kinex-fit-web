@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedUserId } from "@/lib/api-auth";
+import { getOptionalAuthenticatedUserId } from "@/lib/api-auth";
 import { parseWorkoutContentWithFallback } from "@/lib/workout-parser";
 import { checkRateLimit } from "@/lib/rate-limit";
+import {
+  applyGuestSessionCookie,
+  getOrCreateGuestSession,
+} from "@/lib/guest-session";
 import { z } from "zod";
 
 const ingestSchema = z
@@ -12,14 +16,16 @@ const ingestSchema = z
 
 export async function POST(req: NextRequest){
   try {
-    // SECURITY FIX: Use new auth utility
-    const auth = await getAuthenticatedUserId();
-    if ('error' in auth) return auth.error;
-    const { userId } = auth;
+    const auth = await getOptionalAuthenticatedUserId();
+    const guestSession = auth ? null : await getOrCreateGuestSession(req.headers);
+    const actorId = auth?.userId ?? guestSession!.actorId;
+    const rateLimitId = auth?.userId ?? guestSession!.rateLimitId;
+    const respond = (response: NextResponse) =>
+      guestSession ? applyGuestSessionCookie(response, guestSession) : response;
 
-    const rateLimit = await checkRateLimit(userId, 'api:write');
+    const rateLimit = await checkRateLimit(rateLimitId, 'api:write');
     if (!rateLimit.success) {
-      return NextResponse.json(
+      return respond(NextResponse.json(
         {
           error: 'Too many requests',
           limit: rateLimit.limit,
@@ -35,22 +41,22 @@ export async function POST(req: NextRequest){
             'Retry-After': Math.ceil((rateLimit.reset - Date.now()) / 1000).toString(),
           },
         }
-      );
+      ));
     }
 
     const body = await req.json();
     const parsed = ingestSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json(
+      return respond(NextResponse.json(
         { error: parsed.error.errors[0]?.message || "Invalid request body" },
         { status: 400 }
-      );
+      ));
     }
     const { caption } = parsed.data;
 
     // Use smart workout parser
     const parsedWorkout = await parseWorkoutContentWithFallback(caption, {
-      context: { userId },
+      context: { userId: actorId },
     });
 
     // Create backward-compatible rows format
@@ -94,7 +100,7 @@ export async function POST(req: NextRequest){
         estimatedDuration = parsedWorkout.exercises.length * 3;
     }
 
-    return NextResponse.json({
+    return respond(NextResponse.json({
       title: parsedWorkout.title,
       workoutType: parsedWorkout.workoutType,
       exercises: parsedWorkout.exercises,
@@ -111,7 +117,7 @@ export async function POST(req: NextRequest){
         difficulty: parsedWorkout.exercises.length > 4 ? 'hard' : 'moderate',
         tags: ['smart-parsed', parsedWorkout.structure.type]
       }
-    });
+    }));
 
   } catch (error) {
     console.error('Error processing workout:', error);

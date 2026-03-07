@@ -240,7 +240,7 @@ export default function HomePage() {
   // Redirect unauthenticated users to landing page
   useEffect(() => {
     if (!isSessionLoading && !isAuthenticated) {
-      router.push('/landing')
+      router.push('/start')
     }
   }, [isSessionLoading, isAuthenticated, router])
 

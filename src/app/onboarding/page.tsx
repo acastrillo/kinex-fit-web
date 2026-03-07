@@ -1,95 +1,96 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
-import { useAuthStore } from '@/store';
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { OnboardingContainer } from '@/components/onboarding/OnboardingContainer';
-import { WelcomeStep } from '@/components/onboarding/WelcomeStep';
-import { BasicProfileStep } from '@/components/onboarding/BasicProfileStep';
-import { ExperienceStep } from '@/components/onboarding/ExperienceStep';
-import { ScheduleStep } from '@/components/onboarding/ScheduleStep';
-import { EquipmentStep } from '@/components/onboarding/EquipmentStep';
-import { GoalsStep } from '@/components/onboarding/GoalsStep';
-import { PersonalRecordsStep } from '@/components/onboarding/PersonalRecordsStep';
-import { CompleteStep } from '@/components/onboarding/CompleteStep';
-import { Loader2 } from 'lucide-react';
-import type { PersonalRecord } from '@/lib/training-profile';
+import { useAuthStore } from '@/store';
+import { createSampleWorkoutDraft } from '@/lib/sample-workouts';
+import { trackEvent } from '@/lib/analytics';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ArrowRight, Dumbbell, FileText, Loader2, Sparkles, Target } from 'lucide-react';
 
-interface OnboardingData {
-  firstName: string;
-  lastName: string;
-  experience: 'beginner' | 'intermediate' | 'advanced' | null;
-  trainingDays: number;
-  sessionDuration: number | null;
-  equipment: string[];
-  goals: string[];
-  personalRecords: Record<string, PersonalRecord>;
+const QUICK_GOALS = [
+  {
+    id: 'hypertrophy',
+    label: 'Build Muscle',
+    description: 'Bias future workout recommendations toward hypertrophy-focused sessions.',
+    trainingGoal: 'Build muscle (hypertrophy)',
+  },
+  {
+    id: 'strength',
+    label: 'Get Stronger',
+    description: 'Favor compound lifts, progressive overload, and lower-rep strength work.',
+    trainingGoal: 'Increase strength (powerlifting)',
+  },
+  {
+    id: 'fat_loss',
+    label: 'Lose Fat',
+    description: 'Lean into conditioning, density, and calorie-burning training blocks.',
+    trainingGoal: 'Lose fat / Weight loss',
+  },
+] as const;
+
+function normalizeNextPath(raw: string | null) {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) {
+    return '/';
+  }
+
+  return raw;
 }
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { user, isAuthenticated, isLoading: isSessionLoading } = useAuthStore();
+  const searchParams = useSearchParams();
   const { update: updateSession } = useSession();
-  const [currentStep, setCurrentStep] = useState(0);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isSkippingAll, setIsSkippingAll] = useState(false);
+  const { user, isAuthenticated, isLoading: isSessionLoading } = useAuthStore();
+  const [isSaving, setIsSaving] = useState(false);
+  const [selectedGoal, setSelectedGoal] = useState<string | null>(null);
 
-  const [formData, setFormData] = useState<OnboardingData>({
-    firstName: '',
-    lastName: '',
-    experience: null,
-    trainingDays: 4,
-    sessionDuration: null,
-    equipment: [],
-    goals: [],
-    personalRecords: {},
-  });
+  const currentStep = searchParams.get('step');
+  const isQuickGoalStep = currentStep === 'goals';
+  const nextPath = useMemo(() => normalizeNextPath(searchParams.get('next')), [searchParams]);
 
-  // Track if we've already initialized form data from user
-  const hasInitializedForm = useRef(false);
-
-  // Redirect if not authenticated or already completed onboarding
-  // Wait for session to finish loading before making redirect decisions
   useEffect(() => {
-    // Don't redirect while session is still loading
     if (isSessionLoading) return;
 
     if (!isAuthenticated) {
-      router.push('/auth/login');
-    } else if (user?.onboardingCompleted || user?.onboardingSkipped) {
-      router.push('/');
-    } else if (user && !hasInitializedForm.current) {
-      // Pre-populate with existing user data ONLY ONCE
-      hasInitializedForm.current = true;
-      setFormData((prev) => ({
-        ...prev,
-        firstName: user.firstName || '',
-        lastName: user.lastName || '',
-      }));
+      router.replace('/start');
+      return;
     }
-  }, [isAuthenticated, isSessionLoading, user, router]);
 
-  // Simple session refresh - DynamoDB writes are immediately consistent
-  // so we just need to trigger one session update before redirecting
+    if (user?.onboardingCompleted || user?.onboardingSkipped) {
+      router.replace('/');
+    }
+  }, [isAuthenticated, isSessionLoading, router, user?.onboardingCompleted, user?.onboardingSkipped]);
+
+  useEffect(() => {
+    if (isSessionLoading) return;
+    trackEvent('onboarding_viewed', {
+      authenticated: isAuthenticated,
+      step: isQuickGoalStep ? 'goals' : 'import',
+    });
+  }, [isAuthenticated, isQuickGoalStep, isSessionLoading]);
+
   const refreshSession = async () => {
     try {
       await updateSession();
-      // Brief pause to allow session propagation
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 200));
     } catch {
-      // Continue even if session update fails - the redirect will work
+      // Ignore refresh failures; DynamoDB state is already the source of truth.
     }
   };
 
-  // Handler to skip all remaining onboarding steps
   const handleSkipAll = async () => {
-    setIsSkippingAll(true);
-
+    setIsSaving(true);
     try {
+      trackEvent('onboarding_skipped');
       const response = await fetch('/api/user/onboarding', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({ completed: false, skipped: true }),
       });
 
@@ -97,253 +98,203 @@ export default function OnboardingPage() {
         throw new Error('Failed to skip onboarding');
       }
 
-      // Refresh session and redirect
       await refreshSession();
       window.location.replace('/');
     } catch (error) {
-      console.error('Error skipping onboarding:', error);
-      alert('Failed to skip. Please try again.');
-      setIsSkippingAll(false);
+      console.error('Failed to skip onboarding:', error);
+      alert('Failed to skip onboarding. Please try again.');
+      setIsSaving(false);
     }
   };
 
-  const totalSteps = 8;
-
-  // Define which steps are skippable
-  const isSkippable = (step: number) => {
-    return step === 4 || step === 6; // Equipment and PRs steps
+  const handleSampleWorkout = () => {
+    if (typeof window === 'undefined') return;
+    trackEvent('onboarding_sample_selected');
+    sessionStorage.setItem('workoutToEdit', JSON.stringify(createSampleWorkoutDraft('sample_push_hypertrophy')));
+    router.push('/add/edit');
   };
 
-  // Validate current step
-  const isStepValid = () => {
-    switch (currentStep) {
-      case 0: // Welcome
-        return true;
-      case 1: // Basic Profile
-        return formData.firstName.trim().length > 0;
-      case 2: // Experience
-        return formData.experience !== null; // Must select an experience level
-      case 3: // Schedule
-        return formData.trainingDays >= 1 && formData.trainingDays <= 7;
-      case 4: // Equipment
-        return true; // Optional
-      case 5: // Goals
-        return formData.goals.length > 0;
-      case 6: // PRs
-        return true; // Optional
-      case 7: // Complete
-        return true;
-      default:
-        return false;
-    }
-  };
+  const finishQuickGoalStep = async (goal?: string | null) => {
+    setIsSaving(true);
 
-  const saveStepData = async (step: number) => {
     try {
-      if (step === 1) {
-        // Save basic profile
-        const res = await fetch('/api/user/settings', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
+      if (goal) {
+        trackEvent('onboarding_goal_selected', {
+          goal,
+        });
+        const response = await fetch('/api/user/profile', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
           body: JSON.stringify({
-            firstName: formData.firstName,
-            lastName: formData.lastName,
+            goals: [goal],
+            primaryGoal: goal,
+            updatedAt: new Date().toISOString(),
           }),
         });
 
-        if (!res.ok) throw new Error('Failed to save profile');
-      } else if (step >= 2 && step <= 6) {
-        // Save training profile
-        const profile = {
-          experience: formData.experience,
-          trainingDays: formData.trainingDays,
-          sessionDuration: formData.sessionDuration,
-          equipment: formData.equipment,
-          goals: formData.goals,
-          personalRecords: formData.personalRecords,
-          constraints: [],
-          updatedAt: new Date().toISOString(),
-        };
-
-        const res = await fetch('/api/user/profile', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(profile),
-        });
-
-        if (!res.ok) throw new Error('Failed to save training profile');
-      }
-    } catch (error) {
-      console.error('Error saving step data:', error);
-      throw error;
-    }
-  };
-
-  const handleNext = async () => {
-    if (!isStepValid()) return;
-
-    setIsLoading(true);
-
-    try {
-      // Save current step data
-      await saveStepData(currentStep);
-
-      if (currentStep === totalSteps - 1) {
-        // Mark onboarding complete
-        const response = await fetch('/api/user/onboarding', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ completed: true }),
-        });
-
         if (!response.ok) {
-          throw new Error('Failed to complete onboarding');
+          throw new Error('Failed to save goal');
         }
-
-        // Refresh session and redirect
-        await refreshSession();
-        window.location.replace('/');
-      } else {
-        // Move to next step
-        setCurrentStep((prev) => prev + 1);
       }
+
+      const onboardingResponse = await fetch('/api/user/onboarding', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ completed: true }),
+      });
+
+      if (!onboardingResponse.ok) {
+        throw new Error('Failed to complete onboarding');
+      }
+
+      await refreshSession();
+      window.location.replace(nextPath);
     } catch (error) {
-      console.error('Error advancing step:', error);
-      alert('Failed to save. Please try again.');
-    } finally {
-      setIsLoading(false);
+      console.error('Failed to finish onboarding:', error);
+      alert('Failed to update onboarding. Please try again.');
+      setIsSaving(false);
     }
   };
 
-  const handleBack = () => {
-    if (currentStep > 0) {
-      setCurrentStep((prev) => prev - 1);
-    }
-  };
-
-  const handleSkip = async () => {
-    if (!isSkippable(currentStep)) return;
-
-    setIsLoading(true);
-
-    try {
-      // Save what we have so far
-      await saveStepData(currentStep);
-
-      // Move to next step
-      setCurrentStep((prev) => prev + 1);
-    } catch (error) {
-      console.error('Error skipping step:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Show loading spinner while session is loading
-  if (isSessionLoading) {
+  if (isSessionLoading || !isAuthenticated || !user) {
     return (
-      <div className="min-h-screen bg-[var(--background)] flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-[var(--background)]">
         <Loader2 className="h-8 w-8 animate-spin text-[var(--primary)]" />
       </div>
     );
   }
 
-  // Redirect to login handled by useEffect above
-  if (!isAuthenticated) {
+  if (isQuickGoalStep) {
     return (
-      <div className="min-h-screen bg-[var(--background)] flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--primary)]" />
-      </div>
+      <main className="min-h-screen px-4 py-10 md:px-6 md:py-16">
+        <div className="mx-auto max-w-3xl">
+          <Card className="border-primary/20 bg-[var(--surface)]/80 shadow-xl">
+            <CardHeader className="space-y-4">
+              <div className="inline-flex w-fit items-center gap-2 rounded-full bg-[var(--primary)]/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--primary)]">
+                <Target className="h-3.5 w-3.5" />
+                One Quick Thing
+              </div>
+              <div>
+                <CardTitle className="text-3xl text-[var(--text-primary)]">What is your main goal right now?</CardTitle>
+                <CardDescription className="mt-2 text-base text-[var(--text-secondary)]">
+                  This is the only profile question in the web flow. You can skip it if you want.
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {QUICK_GOALS.map((goal) => {
+                const isSelected = selectedGoal === goal.trainingGoal;
+                return (
+                  <button
+                    key={goal.id}
+                    type="button"
+                    onClick={() => setSelectedGoal(goal.trainingGoal)}
+                    className={`w-full rounded-2xl border p-5 text-left transition-all ${
+                      isSelected
+                        ? 'border-[var(--primary)] bg-[var(--primary)]/10'
+                        : 'border-[var(--border)] bg-[var(--background)] hover:border-[var(--primary)]/40'
+                    }`}
+                  >
+                    <div className="text-lg font-semibold text-[var(--text-primary)]">{goal.label}</div>
+                    <div className="mt-1 text-sm text-[var(--text-secondary)]">{goal.description}</div>
+                  </button>
+                );
+              })}
+
+              <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:justify-end">
+                <Button variant="ghost" onClick={() => finishQuickGoalStep(null)} disabled={isSaving}>
+                  Skip
+                </Button>
+                <Button onClick={() => finishQuickGoalStep(selectedGoal)} disabled={!selectedGoal || isSaving}>
+                  {isSaving ? 'Saving...' : 'Continue'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </main>
     );
   }
-
-  // Render current step
-  const renderStep = () => {
-    switch (currentStep) {
-      case 0:
-        return <WelcomeStep />;
-      case 1:
-        return (
-          <BasicProfileStep
-            firstName={formData.firstName}
-            lastName={formData.lastName}
-            onFirstNameChange={(value) =>
-              setFormData((prev) => ({ ...prev, firstName: value }))
-            }
-            onLastNameChange={(value) =>
-              setFormData((prev) => ({ ...prev, lastName: value }))
-            }
-          />
-        );
-      case 2:
-        return (
-          <ExperienceStep
-            experience={formData.experience}
-            onExperienceChange={(value) =>
-              setFormData((prev) => ({ ...prev, experience: value }))
-            }
-          />
-        );
-      case 3:
-        return (
-          <ScheduleStep
-            trainingDays={formData.trainingDays}
-            sessionDuration={formData.sessionDuration}
-            onTrainingDaysChange={(value) =>
-              setFormData((prev) => ({ ...prev, trainingDays: value }))
-            }
-            onSessionDurationChange={(value) =>
-              setFormData((prev) => ({ ...prev, sessionDuration: value }))
-            }
-          />
-        );
-      case 4:
-        return (
-          <EquipmentStep
-            equipment={formData.equipment}
-            onEquipmentChange={(value) =>
-              setFormData((prev) => ({ ...prev, equipment: value }))
-            }
-          />
-        );
-      case 5:
-        return (
-          <GoalsStep
-            goals={formData.goals}
-            onGoalsChange={(value) =>
-              setFormData((prev) => ({ ...prev, goals: value }))
-            }
-          />
-        );
-      case 6:
-        return (
-          <PersonalRecordsStep
-            personalRecords={formData.personalRecords}
-            onPersonalRecordsChange={(value) =>
-              setFormData((prev) => ({ ...prev, personalRecords: value }))
-            }
-          />
-        );
-      case 7:
-        return <CompleteStep />;
-      default:
-        return null;
-    }
-  };
 
   return (
-    <OnboardingContainer
-      currentStep={currentStep}
-      totalSteps={totalSteps}
-      onNext={handleNext}
-      onBack={handleBack}
-      onSkip={handleSkip}
-      onSkipAll={handleSkipAll}
-      canSkip={isSkippable(currentStep)}
-      isNextDisabled={!isStepValid()}
-      isLoading={isLoading || isSkippingAll}
-    >
-      {renderStep()}
-    </OnboardingContainer>
+    <main className="min-h-screen px-4 py-10 md:px-6 md:py-16">
+      <div className="mx-auto grid max-w-6xl gap-6 rounded-[32px] border border-white/10 bg-[linear-gradient(135deg,rgba(249,115,22,0.14),rgba(15,23,42,0.92))] p-8 shadow-[0_30px_120px_rgba(0,0,0,0.35)] md:grid-cols-[1.2fr_0.8fr] md:p-12">
+        <div className="space-y-6">
+          <div className="inline-flex w-fit items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-white/80">
+            <Sparkles className="h-3.5 w-3.5 text-primary" />
+            Authenticated Onboarding
+          </div>
+
+          <div className="space-y-3">
+            <h1 className="max-w-3xl text-4xl font-bold tracking-tight text-white md:text-6xl">
+              Import first. We will personalize after the win.
+            </h1>
+            <p className="max-w-2xl text-base leading-7 text-white/75 md:text-lg">
+              Save your first workout, then we ask a single goal question. No more 8-step setup before the product does anything useful.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Link href="/add" className="block">
+              <Button size="lg" className="h-12 gap-2 px-6">
+                <ArrowRight className="h-4 w-4" />
+                Go To Import Flow
+              </Button>
+            </Link>
+            <Button size="lg" variant="outline" className="h-12 gap-2 border-white/20 bg-white/5 px-6 text-white hover:bg-white/10" onClick={handleSampleWorkout}>
+              <FileText className="h-4 w-4" />
+              Try Sample Workout
+            </Button>
+          </div>
+
+          <div className="grid gap-3 text-sm text-white/75 md:grid-cols-3">
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+              <div className="mb-1 font-semibold text-white">1. Import</div>
+              <div>Use Instagram, OCR, or manual text in the existing authenticated flow.</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+              <div className="mb-1 font-semibold text-white">2. Save</div>
+              <div>The first saved workout becomes the activation event for onboarding.</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+              <div className="mb-1 font-semibold text-white">3. One quick goal</div>
+              <div>After save, answer one question or skip and go straight to the workout.</div>
+            </div>
+          </div>
+        </div>
+
+        <Card className="border-white/10 bg-black/35 text-white shadow-none">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-2xl">
+              <Dumbbell className="h-6 w-6 text-primary" />
+              What Happens Next
+            </CardTitle>
+            <CardDescription className="text-white/65">
+              The current web import stack stays intact. We are only removing the up-front friction.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="mb-1 text-sm font-semibold text-white">Supported on web right now</div>
+              <p className="text-sm text-white/70">Instagram links, screenshots via OCR, manual text, and sample workouts.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="mb-1 text-sm font-semibold text-white">Onboarding completion rule</div>
+              <p className="text-sm text-white/70">First successful save routes into a single goal question and then clears onboarding.</p>
+            </div>
+            <div className="flex flex-col gap-3 pt-2">
+              <Button variant="ghost" className="w-full justify-center gap-2 text-white/70 hover:text-white" onClick={handleSkipAll} disabled={isSaving}>
+                Skip For Now
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </main>
   );
 }

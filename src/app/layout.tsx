@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import "./globals.css";
 import AuthSessionProvider from "@/components/providers/session-provider";
 import { VersionChecker } from "@/components/VersionChecker";
+import { GuestWorkoutMigrator } from "@/components/auth/guest-workout-migrator";
 
 // TEMPORARILY DISABLED - TESTING IF GOOGLE FONTS CAUSING HANG
 // const geistSans = Geist({
@@ -115,6 +116,7 @@ export default async function RootLayout({
 
         <AuthSessionProvider>
           <VersionChecker />
+          <GuestWorkoutMigrator />
           {children}
         </AuthSessionProvider>
       </body>

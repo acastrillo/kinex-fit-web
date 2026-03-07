@@ -50,11 +50,11 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean; // Add isLoading state
   user: User | null;
-  login: (provider?: AuthProvider) => Promise<void>;
-  loginWithEmail: (email: string) => Promise<void>;
-  loginWithCredentials: (email: string, password: string) => Promise<void>;
+  login: (provider?: AuthProvider, callbackUrl?: string) => Promise<void>;
+  loginWithEmail: (email: string, callbackUrl?: string) => Promise<void>;
+  loginWithCredentials: (email: string, password: string, callbackUrl?: string) => Promise<void>;
   signup: (email: string, password: string, firstName?: string, lastName?: string) => Promise<{ success: boolean; error?: string; message?: string }>;
-  devLogin: (email: string) => Promise<void>; // Dev-only login
+  devLogin: (email: string, callbackUrl?: string) => Promise<void>; // Dev-only login
   logout: () => Promise<void>;
 }
 
@@ -90,30 +90,30 @@ export const useAuthStore = (): AuthState => {
     isAuthenticated: status === "authenticated",
     isLoading: status === "loading", // Expose the loading state
     user,
-    login: async (provider: AuthProvider = "google") => {
+    login: async (provider: AuthProvider = "google", callbackUrl = "/") => {
       await nextAuthSignIn(provider, {
-        callbackUrl: "/",
+        callbackUrl,
         redirect: true
       });
     },
-    loginWithEmail: async (email: string) => {
+    loginWithEmail: async (email: string, callbackUrl = "/") => {
       if (!email) {
         throw new Error("Email is required for magic link sign-in.");
       }
       await nextAuthSignIn("email", {
         email,
-        callbackUrl: "/",
+        callbackUrl,
         redirect: true
       });
     },
-    loginWithCredentials: async (email: string, password: string) => {
+    loginWithCredentials: async (email: string, password: string, callbackUrl = "/") => {
       if (!email || !password) {
         throw new Error("Email and password are required.");
       }
       const result = await nextAuthSignIn("credentials", {
         email,
         password,
-        callbackUrl: "/",
+        callbackUrl,
         redirect: false,
       });
 
@@ -145,13 +145,13 @@ export const useAuthStore = (): AuthState => {
         return { success: false, error: "Network error. Please try again." };
       }
     },
-    devLogin: async (email: string) => {
+    devLogin: async (email: string, callbackUrl = "/") => {
       if (!email) {
         throw new Error("Email is required for dev login.");
       }
       await nextAuthSignIn("dev-credentials", {
         email,
-        callbackUrl: "/",
+        callbackUrl,
         redirect: true
       });
     },

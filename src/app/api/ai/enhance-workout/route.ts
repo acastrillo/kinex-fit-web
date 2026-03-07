@@ -11,7 +11,7 @@
  * - Add personalized notes based on user's training profile
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthenticatedSession } from '@/lib/api-auth';
+import { getOptionalAuthenticatedSession } from '@/lib/api-auth';
 import { dynamoDBUsers, dynamoDBWorkouts, DynamoDBWorkout } from '@/lib/dynamodb';
 import {
   structureWorkout,
@@ -32,6 +32,13 @@ import { checkRateLimit } from '@/lib/rate-limit';
 import { hasRole } from '@/lib/rbac';
 import { checkUsageCap } from '@/lib/ai/usage-tracking';
 import { isMonthlyResetDue } from '@/lib/quota-reset';
+import {
+  applyGuestSessionCookie,
+  buildGuestQuotaExceededResponse,
+  consumeGuestQuota,
+  GUEST_AI_LIMIT,
+  getOrCreateGuestSession,
+} from '@/lib/guest-session';
 
 interface EnhanceWorkoutRequest {
   // Either workoutId (enhance existing) or rawText (parse new)
@@ -50,6 +57,9 @@ interface EnhanceWorkoutResponse {
   };
   quotaRemaining?: number;
   error?: string;
+  isGuest?: boolean;
+  aiUsed?: number;
+  aiLimit?: number;
 }
 
 /**
@@ -78,20 +88,17 @@ function convertAIToDynamoDB(aiExercises: any[]): any[] {
 
 export async function POST(req: NextRequest): Promise<NextResponse<EnhanceWorkoutResponse>> {
   try {
-    // SECURITY FIX: Use new auth utility with session
-    const auth = await getAuthenticatedSession();
-    if ('error' in auth) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-    const { userId, session } = auth;
+    const auth = await getOptionalAuthenticatedSession();
+    const guestSession = auth ? null : await getOrCreateGuestSession(req.headers);
+    const respond = <T extends EnhanceWorkoutResponse>(response: NextResponse<T>) =>
+      (guestSession ? applyGuestSessionCookie(response, guestSession) : response) as NextResponse<T>;
+    const actorId = auth?.userId ?? guestSession!.actorId;
+    const rateLimitId = auth?.userId ?? guestSession!.rateLimitId;
 
     // RATE LIMITING: Check rate limit (30 AI requests per hour)
-    const rateLimit = await checkRateLimit(userId, 'api:ai');
+    const rateLimit = await checkRateLimit(rateLimitId, 'api:ai');
     if (!rateLimit.success) {
-      return NextResponse.json(
+      return respond(NextResponse.json(
         {
           success: false,
           error: 'Too many AI requests',
@@ -108,111 +115,68 @@ export async function POST(req: NextRequest): Promise<NextResponse<EnhanceWorkou
             'Retry-After': Math.ceil((rateLimit.reset - Date.now()) / 1000).toString(),
           },
         }
-      );
+      ));
     }
 
     const body: EnhanceWorkoutRequest = await req.json();
     const { workoutId, rawText, enhancementType = 'full' } = body;
 
     if (!workoutId && !rawText) {
-      return NextResponse.json(
+      return respond(NextResponse.json(
         { success: false, error: 'Either workoutId or rawText is required' },
         { status: 400 }
-      );
+      ));
     }
 
-    // Get user and check AI quota (create if doesn't exist)
-    let user = await dynamoDBUsers.get(userId);
-    if (!user) {
-      // User not synced to DynamoDB yet - create with defaults
-      console.log('[AI Enhance] User not found in DynamoDB, creating with defaults');
-      try {
-        const userEmail = session.user?.email || `user-${userId}@temp.com`;
-        const firstName = (session.user as any)?.firstName || null;
-        const lastName = (session.user as any)?.lastName || null;
-
-        // Create user with free tier (production default)
-        user = await dynamoDBUsers.upsert({
-          id: userId,
-          email: userEmail,
-          firstName,
-          lastName,
-          subscriptionTier: 'free',
-          aiRequestsLimit: 0,
-        });
-        console.log('[AI Enhance] User created successfully');
-      } catch (createError) {
-        console.error('[AI Enhance] Failed to create user:', createError);
-        return NextResponse.json(
-          { success: false, error: 'User not found and could not be created. Please try logging out and back in.' },
-          { status: 500 }
-        );
-      }
-    }
-
-    const tier = normalizeSubscriptionTier(user.subscriptionTier);
-    const aiLimit = getAIRequestLimit(tier);
-
-    // ADMIN BYPASS: Admins have unlimited AI quotas
-    const isAdmin = hasRole(user, 'admin');
-
-    let aiUsed = user.aiRequestsUsed || 0;
-    if (!isAdmin && isMonthlyResetDue(user.lastAiRequestReset)) {
-      await dynamoDBUsers.resetAIQuota(userId);
-      aiUsed = 0;
-    }
-
-    // Check if user has AI quota remaining (skip for admins)
-    if (!isAdmin && aiLimit <= 0) {
-      const upgradeMessage = aiLimit === 0
-        ? 'AI features are not available on the free tier. Upgrade to Core ($8.99/mo) for 10 AI requests per month.'
-        : `You've reached your AI request limit (${aiUsed}/${aiLimit} used this month). Upgrade to Pro for more AI requests.`;
-
-      return NextResponse.json(
-        {
-          success: false,
-          error: upgradeMessage,
-          quotaRemaining: 0,
-          tier,
-          aiUsed,
-          aiLimit,
-        },
-        { status: 403 }
-      );
-    }
-
-    // Check usage caps (cost, tokens, requests) before consuming quota
-    if (!isAdmin) {
-      const capCheck = await checkUsageCap(userId, tier);
-      if (!capCheck.allowed) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Usage cap exceeded: ${capCheck.reason}. Your plan will reset next month.`,
-            quotaRemaining: 0,
-            tier,
-            usage: capCheck.usage,
-            limits: capCheck.limits,
-          },
-          { status: 403 }
-        );
-      }
-
-      // Warn if approaching limits
-      if (capCheck.shouldWarn) {
-        console.warn(`[AI Enhance] User ${userId} approaching usage cap:`, {
-          usage: capCheck.usage,
-          limits: capCheck.limits,
-          percentages: capCheck.percentages,
-        });
-      }
-    }
-
+    let user = null;
+    let tier = 'guest';
+    let aiLimit = GUEST_AI_LIMIT;
+    let aiUsed = guestSession?.usage.aiUsed ?? 0;
     let aiUsedAfter = aiUsed;
-    if (!isAdmin) {
-      const consumeResult = await dynamoDBUsers.consumeQuota(userId, 'aiRequestsUsed', aiLimit);
-      if (!consumeResult.success) {
-        const upgradeMessage = `You've reached your AI request limit (${aiUsed}/${aiLimit} used this month). Upgrade to Pro for more AI requests.`;
+    let isAdmin = false;
+
+    if (auth) {
+      user = await dynamoDBUsers.get(auth.userId);
+      if (!user) {
+        console.log('[AI Enhance] User not found in DynamoDB, creating with defaults');
+        try {
+          const userEmail = auth.session.user?.email || `user-${auth.userId}@temp.com`;
+          const firstName = (auth.session.user as any)?.firstName || null;
+          const lastName = (auth.session.user as any)?.lastName || null;
+
+          user = await dynamoDBUsers.upsert({
+            id: auth.userId,
+            email: userEmail,
+            firstName,
+            lastName,
+            subscriptionTier: 'free',
+            aiRequestsLimit: 0,
+          });
+          console.log('[AI Enhance] User created successfully');
+        } catch (createError) {
+          console.error('[AI Enhance] Failed to create user:', createError);
+          return NextResponse.json(
+            { success: false, error: 'User not found and could not be created. Please try logging out and back in.' },
+            { status: 500 }
+          );
+        }
+      }
+
+      tier = normalizeSubscriptionTier(user.subscriptionTier);
+      aiLimit = getAIRequestLimit(tier);
+      isAdmin = hasRole(user, 'admin');
+      aiUsed = user.aiRequestsUsed || 0;
+
+      if (!isAdmin && isMonthlyResetDue(user.lastAiRequestReset)) {
+        await dynamoDBUsers.resetAIQuota(auth.userId);
+        aiUsed = 0;
+      }
+
+      if (!isAdmin && aiLimit <= 0) {
+        const upgradeMessage = aiLimit === 0
+          ? 'AI features are not available on the free tier. Upgrade to Core ($8.99/mo) for 10 AI requests per month.'
+          : `You've reached your AI request limit (${aiUsed}/${aiLimit} used this month). Upgrade to Pro for more AI requests.`;
+
         return NextResponse.json(
           {
             success: false,
@@ -225,7 +189,80 @@ export async function POST(req: NextRequest): Promise<NextResponse<EnhanceWorkou
           { status: 403 }
         );
       }
-      aiUsedAfter = consumeResult.newValue ?? aiUsed + 1;
+
+      if (!isAdmin) {
+        const capCheck = await checkUsageCap(auth.userId, tier);
+        if (!capCheck.allowed) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Usage cap exceeded: ${capCheck.reason}. Your plan will reset next month.`,
+              quotaRemaining: 0,
+              tier,
+              usage: capCheck.usage,
+              limits: capCheck.limits,
+            },
+            { status: 403 }
+          );
+        }
+
+        if (capCheck.shouldWarn) {
+          console.warn(`[AI Enhance] User ${auth.userId} approaching usage cap:`, {
+            usage: capCheck.usage,
+            limits: capCheck.limits,
+            percentages: capCheck.percentages,
+          });
+        }
+
+        const consumeResult = await dynamoDBUsers.consumeQuota(auth.userId, 'aiRequestsUsed', aiLimit);
+        if (!consumeResult.success) {
+          const upgradeMessage = `You've reached your AI request limit (${aiUsed}/${aiLimit} used this month). Upgrade to Pro for more AI requests.`;
+          return NextResponse.json(
+            {
+              success: false,
+              error: upgradeMessage,
+              quotaRemaining: 0,
+              tier,
+              aiUsed,
+              aiLimit,
+            },
+            { status: 403 }
+          );
+        }
+        aiUsedAfter = consumeResult.newValue ?? aiUsed + 1;
+      }
+    } else if (guestSession) {
+      if (workoutId) {
+        return respond(NextResponse.json(
+          {
+            success: false,
+            error: 'Sign in to enhance saved workouts. Guest AI is only available while importing new text.',
+          },
+          { status: 401 }
+        ));
+      }
+
+      if (guestSession.usage.aiUsed >= GUEST_AI_LIMIT) {
+        return respond(
+          buildGuestQuotaExceededResponse({
+            feature: 'ai',
+            used: guestSession.usage.aiUsed,
+            limit: GUEST_AI_LIMIT,
+          }) as NextResponse<EnhanceWorkoutResponse>
+        );
+      }
+
+      const guestQuota = await consumeGuestQuota(guestSession.guestId, 'ai', GUEST_AI_LIMIT);
+      if (!guestQuota.success) {
+        return respond(
+          buildGuestQuotaExceededResponse({
+            feature: 'ai',
+            used: guestQuota.usage.aiUsed,
+            limit: GUEST_AI_LIMIT,
+          }) as NextResponse<EnhanceWorkoutResponse>
+        );
+      }
+      aiUsedAfter = guestQuota.usage.aiUsed;
     }
 
     // Determine what we're enhancing: existing workout or raw text
@@ -233,8 +270,15 @@ export async function POST(req: NextRequest): Promise<NextResponse<EnhanceWorkou
     let existingWorkout: DynamoDBWorkout | null = null;
 
     if (workoutId) {
+      if (!auth) {
+        return respond(NextResponse.json(
+          { success: false, error: 'Sign in to enhance saved workouts' },
+          { status: 401 }
+        ));
+      }
+
       // Enhancing existing workout
-      const workout = await dynamoDBWorkouts.get(userId, workoutId);
+      const workout = await dynamoDBWorkouts.get(auth.userId, workoutId);
       if (!workout) {
         return NextResponse.json(
           { success: false, error: 'Workout not found' },
@@ -264,8 +308,8 @@ export async function POST(req: NextRequest): Promise<NextResponse<EnhanceWorkou
 
     // Build training context (TODO: Get PRs from user profile)
     const trainingContext: TrainingContext = {
-      userId,
-      experience: user.experience || 'intermediate',
+      userId: actorId,
+      experience: user?.experience || 'intermediate',
       subscriptionTier: tier,
       workoutId: workoutId, // If enhancing existing workout
       // personalRecords: await getUserPRs(userId), // TODO: Implement
@@ -384,12 +428,33 @@ export async function POST(req: NextRequest): Promise<NextResponse<EnhanceWorkou
         timerConfig,
         updatedAt: new Date().toISOString(),
       };
-      await dynamoDBWorkouts.update(userId, workoutId!, updates);
+      await dynamoDBWorkouts.update(auth!.userId, workoutId!, updates);
       finalWorkout = { ...existingWorkout, ...updates };
+    } else if (!auth) {
+      finalWorkout = {
+        userId: actorId,
+        workoutId: `guest_enhanced_${Date.now()}`,
+        title: result.enhancedWorkout.title || 'Untitled Workout',
+        description: result.enhancedWorkout.description || '',
+        exercises: convertedExercises,
+        content: textToEnhance,
+        tags: result.enhancedWorkout.tags || [],
+        difficulty: result.enhancedWorkout.difficulty || 'intermediate',
+        totalDuration: result.enhancedWorkout.duration || 60,
+        source: 'ai-parse',
+        type: 'manual',
+        workoutType,
+        structure,
+        aiEnhanced: true,
+        aiNotes,
+        timerConfig,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as DynamoDBWorkout;
     } else {
       // Create new workout from parsed text
       const newWorkout: Partial<DynamoDBWorkout> = {
-        userId,
+        userId: auth.userId,
         workoutId: `workout_${Date.now()}`,
         title: result.enhancedWorkout.title || 'Untitled Workout',
         description: result.enhancedWorkout.description || '',
@@ -408,7 +473,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<EnhanceWorkou
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      await dynamoDBWorkouts.upsert(userId, newWorkout as DynamoDBWorkout);
+      await dynamoDBWorkouts.upsert(auth.userId, newWorkout as DynamoDBWorkout);
       finalWorkout = newWorkout as DynamoDBWorkout;
     }
 
@@ -421,7 +486,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<EnhanceWorkou
     console.log('[AI Enhance] Tokens:', result.bedrockResponse.usage);
     console.log('[AI Enhance] Estimated cost:', cost);
 
-    return NextResponse.json({
+    return respond(NextResponse.json({
       success: true,
       enhancedWorkout: finalWorkout,
       cost: {
@@ -430,7 +495,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<EnhanceWorkou
         estimatedCost: result.bedrockResponse.cost?.total || cost,
       },
       quotaRemaining: isAdmin ? 999999 : Math.max(0, aiLimit - aiUsedAfter),
-    });
+      isGuest: !auth,
+      aiUsed: aiUsedAfter,
+      aiLimit,
+    }));
   } catch (error) {
     console.error('[AI Enhance] Error:', error);
 

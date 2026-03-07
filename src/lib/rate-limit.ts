@@ -22,34 +22,7 @@
  */
 
 import { Ratelimit } from '@upstash/ratelimit';
-import { Redis } from '@upstash/redis';
-
-// Redis client (singleton)
-let redis: Redis | null = null;
-
-/**
- * Get or create Redis client
- */
-function getRedisClient(): Redis {
-  if (!redis) {
-    const url = process.env.UPSTASH_REDIS_REST_URL;
-    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-
-    if (!url || !token) {
-      throw new Error(
-        'UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be set. ' +
-        'Sign up at https://upstash.com/ and add to .env'
-      );
-    }
-
-    redis = new Redis({
-      url,
-      token,
-    });
-  }
-
-  return redis;
-}
+import { getRedisClient } from '@/lib/upstash';
 
 /**
  * Rate limit tiers by operation type

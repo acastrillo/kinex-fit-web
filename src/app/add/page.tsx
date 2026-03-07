@@ -3,7 +3,6 @@
 import { useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { useAuthStore } from "@/store"
-import { Login } from "@/components/auth/login"
 import { Header } from "@/components/layout/header"
 import { MobileNav } from "@/components/layout/mobile-nav"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -34,6 +33,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner"
 import { getQuotaLimit } from "@/lib/stripe"
 import { UpgradePrompt } from "@/components/subscription/upgrade-prompt"
 import { WorkoutEnhancerButton } from "@/components/ai/workout-enhancer-button"
+import { trackEvent } from "@/lib/analytics"
 import Link from "next/link"
 import Image from "next/image"
 
@@ -119,6 +119,7 @@ const formatEnhancedWorkoutText = (enhancedWorkout: any): string => {
 
 export default function ImportWorkoutPage() {
   const { isAuthenticated, user } = useAuthStore()
+  const isGuest = !isAuthenticated
   const router = useRouter()
   const [activeTab, setActiveTab] = useState("url")
   const [url, setUrl] = useState("")
@@ -219,6 +220,7 @@ export default function ImportWorkoutPage() {
 
     setIsProcessingOCR(true)
     setOcrError(null)
+    trackEvent('import_ocr_requested', { authenticated: isAuthenticated })
 
     try {
       const formData = new FormData()
@@ -235,7 +237,15 @@ export default function ImportWorkoutPage() {
         if (response.status === 429) {
           const used = data.scanQuotaUsed ?? data.quotaUsed
           const limit = data.scanQuotaLimit ?? data.quotaLimit
-          setOcrError(`Scan quota exceeded. You've used ${used}/${limit} credits. ${data.subscriptionTier === 'free' ? 'Upgrade to get more!' : ''}`)
+          setOcrError(
+            data.isGuest
+              ? `Guest scan limit reached (${used}/${limit}). Create a free account to keep going.`
+              : `Scan quota exceeded. You've used ${used}/${limit} credits. ${data.subscriptionTier === 'free' ? 'Upgrade to get more!' : ''}`
+          )
+          trackEvent('import_ocr_failed', {
+            authenticated: isAuthenticated,
+            reason: 'quota',
+          })
           return
         }
         throw new Error(data.error || 'OCR processing failed')
@@ -280,11 +290,16 @@ export default function ImportWorkoutPage() {
         sessionStorage.setItem('workoutToEdit', JSON.stringify(workoutForEdit))
         setWorkoutData(workoutResult)
         setWorkoutTitle(resolvedTitle)
+        trackEvent('import_ocr_succeeded', { authenticated: isAuthenticated })
         // User can now click "Continue to Edit" button to proceed
       }
 
     } catch (error) {
       console.error('OCR processing error:', error)
+      trackEvent('import_ocr_failed', {
+        authenticated: isAuthenticated,
+        reason: 'request_error',
+      })
       setOcrError(error instanceof Error ? error.message : 'Failed to process image')
     } finally {
       setIsProcessingOCR(false)
@@ -295,6 +310,7 @@ export default function ImportWorkoutPage() {
     if (!url.trim()) return
 
     setIsLoading(true)
+    trackEvent('import_instagram_requested', { authenticated: isAuthenticated })
 
     try {
       // Step 1: Fetch from Instagram
@@ -370,10 +386,12 @@ export default function ImportWorkoutPage() {
         thumbnailUrl: fetchData.image || null  // Store Instagram image URL
       }
       sessionStorage.setItem('workoutToEdit', JSON.stringify(workoutForEdit))
+      trackEvent('import_instagram_succeeded', { authenticated: isAuthenticated })
       router.push('/add/edit')
 
     } catch (error) {
       console.error('Process error:', error)
+      trackEvent('import_instagram_failed', { authenticated: isAuthenticated })
       alert(error instanceof Error ? error.message : 'Failed to process workout')
     } finally {
       setIsLoading(false)
@@ -384,6 +402,10 @@ export default function ImportWorkoutPage() {
     if (!workoutTitle || !workoutContent) return
 
     try {
+      trackEvent('import_manual_requested', {
+        authenticated: isAuthenticated,
+        tab: activeTab,
+      })
       let workoutToEdit = workoutData
 
       // If we don't have processed data, process it now
@@ -432,21 +454,25 @@ export default function ImportWorkoutPage() {
       sessionStorage.setItem('workoutToEdit', JSON.stringify(workoutForEdit))
 
       // Navigate to edit page
+      trackEvent('import_manual_succeeded', {
+        authenticated: isAuthenticated,
+        tab: activeTab,
+      })
       router.push('/add/edit')
 
     } catch (error) {
       console.error('Processing error:', error)
+      trackEvent('import_manual_failed', {
+        authenticated: isAuthenticated,
+        tab: activeTab,
+      })
       alert('Failed to process workout')
     }
   }
 
-  if (!isAuthenticated) {
-    return <Login />
-  }
-
   return (
     <>
-      <Header />
+      {isAuthenticated && <Header />}
       <main className="min-h-screen pb-20 md:pb-8 flex justify-center">
         <div className="w-full max-w-4xl mx-auto px-4 py-8">
           {/* Header */}
@@ -455,9 +481,31 @@ export default function ImportWorkoutPage() {
               Create Workout
             </h1>
             <p className="text-text-secondary">
-              Generate with AI or import from Instagram
+              {isGuest
+                ? "Import first as a guest. Save locally, then sign up when you want sync."
+                : "Generate with AI or import from Instagram"}
             </p>
           </div>
+
+          {isGuest && (
+            <Card className="mb-6 border-primary/20 bg-primary/5">
+              <CardContent className="p-5">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div className="space-y-1">
+                    <div className="text-sm font-semibold text-text-primary">Guest import session</div>
+                    <p className="text-sm text-text-secondary">
+                      You can use up to 3 OCR or Instagram scans, 1 AI assist, and 3 local saves before creating an account.
+                    </p>
+                  </div>
+                  <Link href="/auth/login?mode=signup&callbackUrl=%2Fadd" className="block">
+                    <Button variant="outline" className="w-full md:w-auto">
+                      Create Free Account
+                    </Button>
+                  </Link>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* AI Generator Card - Featured */}
           <Card className="mb-6 border-primary/30 bg-gradient-to-br from-primary/5 via-primary/10 to-primary/5">
@@ -473,7 +521,9 @@ export default function ImportWorkoutPage() {
                     </h3>
                   </div>
                   <p className="text-sm text-text-secondary mb-4">
-                    Describe your workout in plain English. AI creates a complete plan with exercises, sets, and weights.
+                    {isGuest
+                      ? "Guest AI can help once per session. It returns a draft you can review before saving locally."
+                      : "Describe your workout in plain English. AI creates a complete plan with exercises, sets, and weights."}
                   </p>
                   <div className="flex flex-wrap gap-2 text-xs text-text-secondary mb-4 md:mb-0">
                     <span className="px-2 py-1 bg-surface rounded-md">✨ Personalized to your PRs</span>
@@ -553,7 +603,7 @@ export default function ImportWorkoutPage() {
                         </Button>
                       </div>
                       <p className="text-sm text-text-secondary mt-2">
-                        Paste Instagram, TikTok, or other workout URLs
+                        Paste an Instagram workout URL
                       </p>
 
                       {fetchedData ? (
@@ -667,6 +717,11 @@ export default function ImportWorkoutPage() {
                             </div>
                           )
                         })()}
+                        {isGuest && (
+                          <div className="text-xs text-text-secondary">
+                            Guest scans: 3 total
+                          </div>
+                        )}
                       </div>
 
                       {user && (() => {
@@ -738,6 +793,13 @@ export default function ImportWorkoutPage() {
                                     feature="more scan credits"
                                   />
                                 )}
+                                {ocrError.includes('Guest scan limit reached') && (
+                                  <Link href="/auth/login?mode=signup&callbackUrl=%2Fadd" className="block">
+                                    <Button variant="outline" size="sm" className="w-full">
+                                      Create Free Account
+                                    </Button>
+                                  </Link>
+                                )}
                               </div>
                             )}
 
@@ -766,6 +828,11 @@ export default function ImportWorkoutPage() {
                                 </div>
                               )
                             })()}
+                            {isGuest && (
+                              <div className="text-sm text-center text-text-secondary">
+                                Guest scan quota is enforced server-side to keep OCR abuse under control.
+                              </div>
+                            )}
 
                             <Button
                               className="w-full"
@@ -986,7 +1053,7 @@ export default function ImportWorkoutPage() {
           </Card>
         </div>
       </main>
-      <MobileNav />
+      {isAuthenticated && <MobileNav />}
     </>
   )
 }

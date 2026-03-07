@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuthStore } from "@/store"
 import { Header } from "@/components/layout/header"
@@ -11,6 +11,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2, Sparkles, ArrowRight, Info, Zap, TrendingUp, Crown } from "lucide-react"
 import { getAIRequestLimit, normalizeSubscriptionTier, type SubscriptionTierInput } from "@/lib/subscription-tiers"
+import { getGuestAiRemaining, GUEST_AI_LIMIT, syncGuestAIUsage } from "@/lib/guest-mode"
+import { trackEvent } from "@/lib/analytics"
 import Link from "next/link"
 
 interface GenerateWorkoutResponse {
@@ -28,11 +30,13 @@ interface GenerateWorkoutResponse {
   tier?: string
   aiUsed?: number
   aiLimit?: number
+  isGuest?: boolean
 }
 
 export default function GenerateWorkoutPage() {
   const router = useRouter()
   const { isAuthenticated, user } = useAuthStore()
+  const isGuest = !isAuthenticated
   const [prompt, setPrompt] = useState("")
   const [isGenerating, setIsGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -46,7 +50,13 @@ export default function GenerateWorkoutPage() {
   const tier = normalizeSubscriptionTier((user?.subscriptionTier ?? 'free') as SubscriptionTierInput)
   const aiLimit = getAIRequestLimit(tier)
   const aiUsed = (user as any)?.aiRequestsUsed || 0
-  const currentQuotaRemaining = aiLimit - aiUsed
+  const currentQuotaRemaining = isAuthenticated ? aiLimit - aiUsed : getGuestAiRemaining()
+
+  useEffect(() => {
+    trackEvent("ai_generate_page_viewed", {
+      authenticated: isAuthenticated,
+    })
+  }, [isAuthenticated])
 
   const examplePrompts = [
     "Upper body push workout, 45 minutes, dumbbells only",
@@ -68,6 +78,9 @@ export default function GenerateWorkoutPage() {
     setRationale(null)
     setAlternatives([])
     setIsQuotaError(false)
+    trackEvent("ai_generate_requested", {
+      authenticated: isAuthenticated,
+    })
 
     try {
       const response = await fetch('/api/ai/generate-workout', {
@@ -85,10 +98,21 @@ export default function GenerateWorkoutPage() {
         if (response.status === 403) {
           setIsQuotaError(true)
         }
+        trackEvent("ai_generate_failed", {
+          authenticated: isAuthenticated,
+          status: response.status,
+        })
         throw new Error(data.error || 'Failed to generate workout')
       }
 
       // Set all response fields
+      if (!isAuthenticated && typeof data.aiUsed === "number") {
+        syncGuestAIUsage(data.aiUsed)
+      }
+      trackEvent("ai_generate_succeeded", {
+        authenticated: isAuthenticated,
+        isGuest: Boolean(data.isGuest),
+      })
       setGeneratedWorkout(data.workout)
       setRationale(data.rationale || null)
       setAlternatives(data.alternatives || [])
@@ -102,34 +126,44 @@ export default function GenerateWorkoutPage() {
   }
 
   const handleViewWorkout = () => {
+    if (isGuest && generatedWorkout) {
+      const draft = {
+        id: generatedWorkout.workoutId || generatedWorkout.id || `guest_ai_${Date.now()}`,
+        title: generatedWorkout.title || "AI Generated Workout",
+        content: prompt.trim(),
+        llmData: {
+          title: generatedWorkout.title,
+          description: generatedWorkout.description,
+          exercises: generatedWorkout.exercises || [],
+          workoutType: generatedWorkout.workoutType || "standard",
+          structure: generatedWorkout.structure || null,
+          aiNotes: generatedWorkout.aiNotes || [],
+          workoutV1: {
+            name: generatedWorkout.title || "AI Generated Workout",
+            totalDuration: generatedWorkout.totalDuration || 45,
+            difficulty: generatedWorkout.difficulty || "intermediate",
+            tags: generatedWorkout.tags || ["ai-generated"],
+          },
+        },
+        author: null,
+        createdAt: new Date().toISOString(),
+        source: "ai-generate",
+        type: "manual",
+        thumbnailUrl: null,
+      }
+      sessionStorage.setItem("workoutToEdit", JSON.stringify(draft))
+      router.push("/add/edit?guest=1")
+      return
+    }
+
     if (generatedWorkout?.workoutId || generatedWorkout?.id) {
       router.push(`/workout/${generatedWorkout.workoutId || generatedWorkout.id}`)
     }
   }
 
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <Card className="max-w-md w-full">
-          <CardHeader>
-            <CardTitle>Sign In Required</CardTitle>
-            <CardDescription>
-              Please sign in to generate AI-powered workouts
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Link href="/auth/login">
-              <Button className="w-full">Sign In</Button>
-            </Link>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
-
   return (
     <>
-      <Header />
+      {isAuthenticated && <Header />}
       <main className="min-h-screen pb-20 md:pb-8">
         <div className="max-w-4xl mx-auto px-4 py-8">
           {/* Header Section */}
@@ -159,21 +193,21 @@ export default function GenerateWorkoutPage() {
                         </div>
                         <div>
                           <p className="text-sm font-medium text-text-primary">
-                            AI Generations Remaining
+                            {isGuest ? "Guest AI Remaining" : "AI Generations Remaining"}
                           </p>
                           <p className="text-xs text-text-secondary">
-                            Resets monthly
+                            {isGuest ? "1 guest generation or enhancement before sign-up" : "Resets monthly"}
                           </p>
                         </div>
                       </div>
                       <div className="text-right">
                         <p className={`text-2xl font-bold ${currentQuotaRemaining <= 0 ? 'text-destructive' : 'text-primary'}`}>
-                          {currentQuotaRemaining} / {aiLimit}
+                          {currentQuotaRemaining} / {isGuest ? GUEST_AI_LIMIT : aiLimit}
                         </p>
                         {currentQuotaRemaining <= 0 && (
-                          <Link href="/subscription" className="text-xs text-primary hover:underline flex items-center gap-1 justify-end mt-1">
+                          <Link href={isGuest ? "/auth/login?mode=signup&callbackUrl=%2Fadd%2Fgenerate" : "/subscription"} className="text-xs text-primary hover:underline flex items-center gap-1 justify-end mt-1">
                             <Crown className="h-3 w-3" />
-                            Upgrade for more
+                            {isGuest ? "Create free account" : "Upgrade for more"}
                           </Link>
                         )}
                       </div>
@@ -229,7 +263,11 @@ export default function GenerateWorkoutPage() {
                     <Alert>
                       <Info className="h-4 w-4" />
                       <AlertDescription className="text-sm">
-                        Uses your <Link href="/settings/training-profile" className="text-primary hover:underline">Training Profile</Link> for personalized weights.
+                        {isGuest ? (
+                          <>Guest AI uses generic defaults. Sign in to personalize with your training profile.</>
+                        ) : (
+                          <>Uses your <Link href="/settings/training-profile" className="text-primary hover:underline">Training Profile</Link> for personalized weights.</>
+                        )}
                       </AlertDescription>
                     </Alert>
 
@@ -239,9 +277,9 @@ export default function GenerateWorkoutPage() {
                         <AlertDescription className="space-y-2">
                           <p>{error}</p>
                           {isQuotaError && (
-                            <Link href="/subscription" className="inline-flex items-center gap-1 text-sm font-medium hover:underline">
+                            <Link href={isGuest ? "/auth/login?mode=signup&callbackUrl=%2Fadd%2Fgenerate" : "/subscription"} className="inline-flex items-center gap-1 text-sm font-medium hover:underline">
                               <Crown className="h-4 w-4" />
-                              View Subscription Plans
+                              {isGuest ? "Create Free Account" : "View Subscription Plans"}
                             </Link>
                           )}
                         </AlertDescription>
@@ -334,7 +372,7 @@ export default function GenerateWorkoutPage() {
                         </div>
                         <div className="text-right">
                           <p className="text-2xl font-bold text-success">
-                            {quotaRemaining} / {aiLimit}
+                            {quotaRemaining} / {isGuest ? GUEST_AI_LIMIT : aiLimit}
                           </p>
                         </div>
                       </div>
@@ -351,7 +389,7 @@ export default function GenerateWorkoutPage() {
                       <div>
                         <CardTitle>Workout Generated!</CardTitle>
                         <CardDescription>
-                          Saved to your library
+                          {isGuest ? "Review it in the editor before saving locally" : "Saved to your library"}
                         </CardDescription>
                       </div>
                     </div>
@@ -407,7 +445,7 @@ export default function GenerateWorkoutPage() {
                     {/* Action Buttons */}
                     <div className="flex gap-3">
                       <Button onClick={handleViewWorkout} className="flex-1" size="lg">
-                        View Workout
+                        {isGuest ? "Review Workout" : "View Workout"}
                         <ArrowRight className="h-4 w-4 ml-2" />
                       </Button>
                       <Button
@@ -431,7 +469,7 @@ export default function GenerateWorkoutPage() {
           </div>
         </div>
       </main>
-      <MobileNav />
+      {isAuthenticated && <MobileNav />}
     </>
   )
 }

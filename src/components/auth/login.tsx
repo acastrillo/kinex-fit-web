@@ -1,7 +1,9 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useAuthStore } from "@/store";
+import { trackEvent } from "@/lib/analytics";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,8 +12,17 @@ import Link from "next/link";
 
 type AuthMode = "signin" | "signup";
 
+function normalizeCallbackUrl(raw: string | null): string {
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) {
+    return "/";
+  }
+
+  return raw;
+}
+
 export function Login() {
   const { login, loginWithCredentials, signup, devLogin } = useAuthStore();
+  const searchParams = useSearchParams();
   const [loadingProvider, setLoadingProvider] = useState<"google" | "facebook" | "email" | "credentials" | "dev" | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [email, setEmail] = useState("");
@@ -21,18 +32,17 @@ export function Login() {
   const isDev = process.env.NODE_ENV === "development";
   const allowDevLogin = process.env.NEXT_PUBLIC_ALLOW_DEV_LOGIN === "true";
   const showDevLogin = isDev && allowDevLogin;
+  const callbackUrl = normalizeCallbackUrl(searchParams.get("callbackUrl"));
+  const authModeHrefSuffix = callbackUrl !== "/" ? `&callbackUrl=${encodeURIComponent(callbackUrl)}` : "";
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const params = new URLSearchParams(window.location.search);
-    const modeParam = params.get("mode");
+    const modeParam = searchParams.get("mode");
     if (modeParam === "signup" || modeParam === "signin") {
       setMode(modeParam);
     }
 
-    const error = params.get("error");
-    const errorDescription = params.get("error_description");
+    const error = searchParams.get("error");
+    const errorDescription = searchParams.get("error_description");
 
     if (!error) {
       setAuthError(null);
@@ -84,7 +94,7 @@ export function Login() {
         );
         break;
     }
-  }, []);
+  }, [searchParams]);
 
   const providers = useMemo(
     () => [
@@ -107,7 +117,7 @@ export function Login() {
         setAuthError(null);
         setEmailStatus(null);
         setLoadingProvider(provider);
-        await login(provider);
+        await login(provider, callbackUrl);
       } catch (error) {
         console.error(`${provider} sign-in error:`, error);
         setAuthError("We could not start the sign-in. Please try again.");
@@ -115,7 +125,7 @@ export function Login() {
         setLoadingProvider(null);
       }
     },
-    [login]
+    [callbackUrl, login]
   );
 
   const handleEmailPasswordAuth = useCallback(async () => {
@@ -144,11 +154,24 @@ export function Login() {
           setAuthError(result.error || "Signup failed");
           return;
         }
-        setEmailStatus(result.message || "Account created. Please sign in.");
-        setMode("signin");
+        trackEvent("auth_signup_succeeded", {
+          callbackUrl,
+        });
+
+        try {
+          await loginWithCredentials(trimmedEmail, trimmedPassword, callbackUrl);
+          return;
+        } catch (loginError) {
+          console.warn("Auto sign-in after signup failed:", loginError);
+          setEmailStatus(result.message || "Account created. Please sign in.");
+          setMode("signin");
+        }
       } else {
         // Sign in
-        await loginWithCredentials(trimmedEmail, trimmedPassword);
+        trackEvent("auth_signin_requested", {
+          callbackUrl,
+        });
+        await loginWithCredentials(trimmedEmail, trimmedPassword, callbackUrl);
         // Auto-redirects on success
       }
     } catch (error: any) {
@@ -157,21 +180,21 @@ export function Login() {
     } finally {
       setLoadingProvider(null);
     }
-  }, [email, password, isSignUp, signup, loginWithCredentials]);
+  }, [callbackUrl, email, password, isSignUp, signup, loginWithCredentials]);
 
   const handleDevLogin = useCallback(async () => {
     try {
       setAuthError(null);
       setEmailStatus(null);
       setLoadingProvider("dev");
-      await devLogin("test@localhost.dev");
+      await devLogin("test@localhost.dev", callbackUrl);
     } catch (error) {
       console.error("Dev login error:", error);
       setAuthError("Dev login failed. Check console for details.");
     } finally {
       setLoadingProvider(null);
     }
-  }, [devLogin]);
+  }, [callbackUrl, devLogin]);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
@@ -291,14 +314,14 @@ export function Login() {
               {isSignUp ? (
                 <>
                   Already have an account?{" "}
-                  <Link href="/auth/login?mode=signin" className="text-[var(--primary)] hover:underline font-medium">
+                  <Link href={`/auth/login?mode=signin${authModeHrefSuffix}`} className="text-[var(--primary)] hover:underline font-medium">
                     Sign in
                   </Link>
                 </>
               ) : (
                 <>
                   Don&apos;t have an account?{" "}
-                  <Link href="/auth/login?mode=signup" className="text-[var(--primary)] hover:underline font-medium">
+                  <Link href={`/auth/login?mode=signup${authModeHrefSuffix}`} className="text-[var(--primary)] hover:underline font-medium">
                     Sign up
                   </Link>
                 </>
