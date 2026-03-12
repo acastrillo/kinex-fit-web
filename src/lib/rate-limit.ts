@@ -53,6 +53,14 @@ export const RATE_LIMITS = {
     requests: 30,
     window: '1 h', // 30 AI requests per hour (Bedrock costs)
   },
+  'api:exercise-resolve': {
+    requests: 120,
+    window: '1 h', // 120 authenticated exercise-resolution requests per hour
+  },
+  'api:guest-import': {
+    requests: 20,
+    window: '1 h', // 20 guest import/resolve requests per hour per IP
+  },
   'api:ai-generate': {
     requests: 20,
     window: '1 h', // 20 AI generation requests per hour
@@ -128,7 +136,14 @@ export async function checkRateLimit(
 
     // Determine if we should fail closed (block requests) or open (allow requests)
     // For expensive operations (OCR, AI, Instagram), default to fail closed to prevent abuse
-    const expensiveOps = ['api:ocr', 'api:ai', 'api:ai-generate', 'api:instagram'];
+    const expensiveOps = [
+      'api:ocr',
+      'api:ai',
+      'api:ai-generate',
+      'api:exercise-resolve',
+      'api:guest-import',
+      'api:instagram',
+    ];
     const shouldFailClosed = options?.failClosed ?? expensiveOps.includes(operation);
 
     if (shouldFailClosed) {

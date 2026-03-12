@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getOptionalAuthenticatedUserId } from '@/lib/api-auth'
+import { getAuthenticatedUserId } from '@/lib/api-auth'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { parseWorkoutContentWithFallback } from '@/lib/workout-parser'
 import { dynamoDBUsers } from '@/lib/dynamodb'
@@ -7,13 +7,6 @@ import { getQuotaLimit, normalizeSubscriptionTier } from '@/lib/subscription-tie
 import { hasRole } from '@/lib/rbac'
 import { isMonthlyResetDue } from '@/lib/quota-reset'
 import { ApifyInstagramError, fetchInstagramFromApify } from '@/lib/apify-instagram'
-import {
-  applyGuestSessionCookie,
-  buildGuestQuotaExceededResponse,
-  consumeGuestQuota,
-  GUEST_SCAN_LIMIT,
-  getOrCreateGuestSession,
-} from '@/lib/guest-session'
 
 interface InstagramFetchRequest {
   url: string
@@ -36,75 +29,55 @@ function quotaExceededResponse(scanUsed: number, scanLimit: number, subscription
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await getOptionalAuthenticatedUserId()
-    const guestSession = auth ? null : await getOrCreateGuestSession(request.headers)
-    const respond = (response: NextResponse) =>
-      guestSession ? applyGuestSessionCookie(response, guestSession) : response
+    const auth = await getAuthenticatedUserId()
+    if ('error' in auth) {
+      return auth.error
+    }
 
-    let user = null
-    let userId = auth?.userId ?? null
-    let isAdmin = false
-    let tier = 'guest'
-    let scanLimit: number | null = GUEST_SCAN_LIMIT
-    let scanUsed = guestSession?.usage.scanUsed ?? 0
-    let importsUsed = guestSession?.usage.instagramUsed ?? 0
+    const { userId } = auth
+    const user = await dynamoDBUsers.get(userId)
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    }
 
-    if (auth?.userId) {
-      user = await dynamoDBUsers.get(auth.userId)
-      if (!user) {
-        return NextResponse.json({ error: 'User not found' }, { status: 404 })
-      }
+    const isAdmin = hasRole(user, 'admin')
+    const tier = normalizeSubscriptionTier(user.subscriptionTier)
+    const scanLimit = getQuotaLimit(tier, 'workoutScansMonthly')
+    let scanUsed = user.scanQuotaUsed ?? ((user.ocrQuotaUsed || 0) + (user.instagramImportsUsed || 0))
+    let importsUsed = user.instagramImportsUsed || 0
+    const lastScanReset = user.scanQuotaResetDate || user.ocrQuotaResetDate || user.lastInstagramImportReset
 
-      userId = auth.userId
-      isAdmin = hasRole(user, 'admin')
-      tier = normalizeSubscriptionTier(user.subscriptionTier)
-      scanLimit = getQuotaLimit(tier, 'workoutScansMonthly')
-      scanUsed = user.scanQuotaUsed ?? ((user.ocrQuotaUsed || 0) + (user.instagramImportsUsed || 0))
-      importsUsed = user.instagramImportsUsed || 0
-      const lastScanReset = user.scanQuotaResetDate || user.ocrQuotaResetDate || user.lastInstagramImportReset
-
-      if (!isAdmin && scanLimit !== null && isMonthlyResetDue(lastScanReset)) {
-        await dynamoDBUsers.resetScanQuota(userId)
-        scanUsed = 0
-        importsUsed = 0
-      }
+    if (!isAdmin && scanLimit !== null && isMonthlyResetDue(lastScanReset)) {
+      await dynamoDBUsers.resetScanQuota(userId)
+      scanUsed = 0
+      importsUsed = 0
     }
 
     let payload: InstagramFetchRequest
     try {
       payload = await request.json()
     } catch {
-      return respond(NextResponse.json({ error: 'Invalid request body' }, { status: 400 }))
+      return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
     }
 
     const url = typeof payload.url === 'string' ? payload.url.trim() : ''
     if (!url) {
-      return respond(NextResponse.json({ error: 'Instagram URL is required' }, { status: 400 }))
+      return NextResponse.json({ error: 'Instagram URL is required' }, { status: 400 })
     }
 
     if (!INSTAGRAM_URL_PATTERN.test(url)) {
-      return respond(NextResponse.json({ error: 'Invalid Instagram URL format' }, { status: 400 }))
+      return NextResponse.json({ error: 'Invalid Instagram URL format' }, { status: 400 })
     }
 
-    if (!auth && guestSession && scanUsed >= GUEST_SCAN_LIMIT) {
-      return respond(
-        buildGuestQuotaExceededResponse({
-          feature: 'scan',
-          used: scanUsed,
-          limit: GUEST_SCAN_LIMIT,
-        })
-      )
-    }
-
-    if (auth && !isAdmin && scanLimit !== null && scanUsed >= scanLimit && user) {
+    if (!isAdmin && scanLimit !== null && scanUsed >= scanLimit) {
       return quotaExceededResponse(scanUsed, scanLimit, user.subscriptionTier)
     }
 
     // Apply rate limiting after request validation so malformed requests do not burn quota.
-    const rateLimit = await checkRateLimit(auth?.userId ?? guestSession!.rateLimitId, 'api:instagram')
+    const rateLimit = await checkRateLimit(userId, 'api:instagram')
     if (!rateLimit.success) {
       const retryAfterSeconds = Math.max(1, Math.ceil((rateLimit.reset - Date.now()) / 1000))
-      return respond(NextResponse.json(
+      return NextResponse.json(
         {
           error: 'Too many Instagram requests',
           message: 'You have exceeded the rate limit for Instagram fetching. Please try again later.',
@@ -121,7 +94,7 @@ export async function POST(request: NextRequest) {
             'Retry-After': retryAfterSeconds.toString(),
           },
         }
-      ))
+      )
     }
 
     const apifyApiToken = process.env.APIFY_API_TOKEN
@@ -154,28 +127,15 @@ export async function POST(request: NextRequest) {
 
     const parsedWorkout = await parseWorkoutContentWithFallback(caption, {
       context: {
-        userId: auth?.userId ?? guestSession!.actorId,
-        subscriptionTier: user?.subscriptionTier || 'guest',
+        userId,
+        subscriptionTier: user.subscriptionTier,
       },
     })
 
     let scanUsedAfter = scanUsed
     let importsUsedAfter = importsUsed
 
-    if (!auth && guestSession) {
-      const guestQuota = await consumeGuestQuota(guestSession.guestId, 'instagram', GUEST_SCAN_LIMIT)
-      if (!guestQuota.success) {
-        return respond(
-          buildGuestQuotaExceededResponse({
-            feature: 'scan',
-            used: guestQuota.usage.scanUsed,
-            limit: GUEST_SCAN_LIMIT,
-          })
-        )
-      }
-      scanUsedAfter = guestQuota.usage.scanUsed
-      importsUsedAfter = guestQuota.usage.instagramUsed
-    } else if (!isAdmin && scanLimit !== null && userId && user) {
+    if (!isAdmin && scanLimit !== null) {
       const consumeResult = await dynamoDBUsers.consumeQuota(userId, 'scanQuotaUsed', scanLimit)
       if (!consumeResult.success) {
         return quotaExceededResponse(scanUsed, scanLimit, user.subscriptionTier)
@@ -230,9 +190,9 @@ export async function POST(request: NextRequest) {
       },
     }
 
-    const currentLimit = auth ? (isAdmin ? null : scanLimit) : GUEST_SCAN_LIMIT
+    const currentLimit = isAdmin ? null : scanLimit
 
-    return respond(NextResponse.json({
+    return NextResponse.json({
       ...workoutData,
       quotaUsed: isAdmin ? scanUsed : scanUsedAfter,
       quotaLimit: currentLimit,
@@ -240,9 +200,9 @@ export async function POST(request: NextRequest) {
       scanQuotaUsed: isAdmin ? scanUsed : scanUsedAfter,
       scanQuotaLimit: currentLimit,
       instagramImportsUsed: isAdmin ? importsUsed : importsUsedAfter,
-      isGuest: !auth,
-      subscriptionTier: user?.subscriptionTier || 'guest',
-    }))
+      isGuest: false,
+      subscriptionTier: user.subscriptionTier,
+    })
   } catch (error) {
     console.error('Instagram fetch error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

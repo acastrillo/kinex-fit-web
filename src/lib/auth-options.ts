@@ -9,11 +9,9 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import { type NextAuthOptions } from "next-auth";
 import { dynamoDBUsers } from "@/lib/dynamodb";
 import { randomUUID } from "crypto";
-import { compare } from "bcryptjs";
 import { maskEmail } from "@/lib/safe-logger";
 import { normalizeSubscriptionTier } from "@/lib/subscription-tiers";
-import { checkRateLimit } from "@/lib/rate-limit";
-import { getRequestIp } from "@/lib/request-ip";
+import { authenticateCredentialsUser } from "@/lib/credentials-auth";
 import { sendSignupAlert } from "@/lib/email-service";
 import { getSystemSettings } from "@/lib/system-settings";
 
@@ -144,32 +142,25 @@ providers.push(
       }
 
       try {
-        const rateLimit = await checkRateLimit(getRequestIp(req?.headers ?? null), 'auth:login');
-        if (!rateLimit.success) {
-          console.warn('[Credentials] Rate limit exceeded for login attempt');
+        const auth = await authenticateCredentialsUser({
+          email: credentials.email,
+          password: credentials.password,
+          headers: req?.headers ?? null,
+          rateLimitOperation: "auth:login",
+        });
+
+        if (!auth.ok) {
+          if (auth.status === 429) {
+            console.warn('[Credentials] Rate limit exceeded for login attempt');
+          } else if (auth.code === "ACCOUNT_DISABLED") {
+            console.warn('[Credentials] Disabled user attempted login:', maskEmail(credentials.email));
+          } else {
+            console.log('[Credentials] Invalid login attempt:', maskEmail(credentials.email));
+          }
           return null;
         }
 
-        // Look up user by email
-        const user = await dynamoDBUsers.getByEmail(credentials.email);
-
-        if (!user) {
-          console.log('[Credentials] User not found:', maskEmail(credentials.email));
-          return null;
-        }
-
-        if (!user.passwordHash) {
-          console.log('[Credentials] User exists but has no password (OAuth user):', maskEmail(credentials.email));
-          return null;
-        }
-
-        // Verify password
-        const isValid = await compare(credentials.password, user.passwordHash);
-
-        if (!isValid) {
-          console.log('[Credentials] Invalid password for:', maskEmail(credentials.email));
-          return null;
-        }
+        const user = auth.user;
 
         console.log('[Credentials] ✓ Successful login:', maskEmail(credentials.email));
 

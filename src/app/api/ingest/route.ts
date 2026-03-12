@@ -2,10 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOptionalAuthenticatedUserId } from "@/lib/api-auth";
 import { parseWorkoutContentWithFallback } from "@/lib/workout-parser";
 import { checkRateLimit } from "@/lib/rate-limit";
-import {
-  applyGuestSessionCookie,
-  getOrCreateGuestSession,
-} from "@/lib/guest-session";
+import { getRequestIp } from "@/lib/request-ip";
 import { z } from "zod";
 
 const ingestSchema = z
@@ -17,15 +14,30 @@ const ingestSchema = z
 export async function POST(req: NextRequest){
   try {
     const auth = await getOptionalAuthenticatedUserId();
-    const guestSession = auth ? null : await getOrCreateGuestSession(req.headers);
-    const actorId = auth?.userId ?? guestSession!.actorId;
-    const rateLimitId = auth?.userId ?? guestSession!.rateLimitId;
-    const respond = (response: NextResponse) =>
-      guestSession ? applyGuestSessionCookie(response, guestSession) : response;
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid request body" },
+        { status: 400 }
+      );
+    }
+    const parsed = ingestSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.errors[0]?.message || "Invalid request body" },
+        { status: 400 }
+      );
+    }
 
-    const rateLimit = await checkRateLimit(rateLimitId, 'api:write');
+    const rateLimit = await checkRateLimit(
+      auth?.userId ?? getRequestIp(req.headers),
+      auth ? 'api:write' : 'api:guest-import'
+    );
     if (!rateLimit.success) {
-      return respond(NextResponse.json(
+      const retryAfterSeconds = Math.max(1, Math.ceil((rateLimit.reset - Date.now()) / 1000));
+      return NextResponse.json(
         {
           error: 'Too many requests',
           limit: rateLimit.limit,
@@ -38,25 +50,19 @@ export async function POST(req: NextRequest){
             'X-RateLimit-Limit': rateLimit.limit.toString(),
             'X-RateLimit-Remaining': rateLimit.remaining.toString(),
             'X-RateLimit-Reset': rateLimit.reset.toString(),
-            'Retry-After': Math.ceil((rateLimit.reset - Date.now()) / 1000).toString(),
+            'Retry-After': retryAfterSeconds.toString(),
           },
         }
-      ));
-    }
-
-    const body = await req.json();
-    const parsed = ingestSchema.safeParse(body);
-    if (!parsed.success) {
-      return respond(NextResponse.json(
-        { error: parsed.error.errors[0]?.message || "Invalid request body" },
-        { status: 400 }
-      ));
+      );
     }
     const { caption } = parsed.data;
 
     // Use smart workout parser
     const parsedWorkout = await parseWorkoutContentWithFallback(caption, {
-      context: { userId: actorId },
+      context: {
+        userId: auth?.userId ?? "guest",
+        subscriptionTier: auth ? undefined : "guest",
+      },
     });
 
     // Create backward-compatible rows format
@@ -100,7 +106,7 @@ export async function POST(req: NextRequest){
         estimatedDuration = parsedWorkout.exercises.length * 3;
     }
 
-    return respond(NextResponse.json({
+    return NextResponse.json({
       title: parsedWorkout.title,
       workoutType: parsedWorkout.workoutType,
       exercises: parsedWorkout.exercises,
@@ -117,7 +123,7 @@ export async function POST(req: NextRequest){
         difficulty: parsedWorkout.exercises.length > 4 ? 'hard' : 'moderate',
         tags: ['smart-parsed', parsedWorkout.structure.type]
       }
-    }));
+    });
 
   } catch (error) {
     console.error('Error processing workout:', error);

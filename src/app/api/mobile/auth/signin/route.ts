@@ -34,16 +34,10 @@ import {
   validateIdentityToken,
   IdentityValidationError,
 } from "@/lib/identity-validators";
-import {
-  signAccessToken,
-  signRefreshToken,
-  hashRefreshTokenJti,
-  getAccessTokenTtlSeconds,
-} from "@/lib/mobile-jwt";
+import { issueMobileAuthSession } from "@/lib/mobile-auth-session";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getRequestIp } from "@/lib/request-ip";
 import { maskEmail } from "@/lib/safe-logger";
-import { normalizeSubscriptionTier } from "@/lib/subscription-tiers";
 import {
   getMobileAuthTraceId,
   jsonWithMobileAuthTrace,
@@ -277,44 +271,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate tokens
-    const tier = normalizeSubscriptionTier(user.subscriptionTier);
-    const accessToken = await signAccessToken(
-      user.id,
-      user.email,
-      tier,
-      provider
-    );
-    const { token: refreshToken, jti } = await signRefreshToken(user.id);
-
-    // Store hashed refresh token JTI for validation
-    const refreshTokenHash = await hashRefreshTokenJti(jti);
-    await dynamoDBUsers.upsert({
-      ...user,
-      mobileRefreshTokenHash: refreshTokenHash,
-    });
-
     console.log(
       `${logPrefix} ${isNewUser ? "Created new user" : "Signed in existing user"}: ${user.id}`
     );
 
-    // Return tokens and user profile
+    const authPayload = await issueMobileAuthSession(user, {
+      provider,
+      isNewUser,
+    });
+
     return jsonWithMobileAuthTrace(
-      {
-        accessToken,
-        refreshToken,
-        expiresIn: getAccessTokenTtlSeconds(),
-        tokenType: "Bearer",
-        user: {
-          id: user.id,
-          email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          subscriptionTier: tier,
-          onboardingCompleted: user.onboardingCompleted || false,
-        },
-        isNewUser,
-      },
+      authPayload,
       { status: isNewUser ? 201 : 200 },
       traceId
     );

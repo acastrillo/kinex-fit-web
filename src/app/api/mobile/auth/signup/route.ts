@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
 
-import { handleWebCredentialsSignup } from "@/lib/credentials-auth";
+import { handleMobileCredentialsSignup } from "@/lib/credentials-auth";
 
 export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
-  return handleWebCredentialsSignup(request);
+  return handleMobileCredentialsSignup(request);
 }
